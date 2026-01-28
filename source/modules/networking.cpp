@@ -10,12 +10,6 @@
 #include "dt.h"
 #include "edict.h"
 #include "eiface.h"
-#define protected public // Need access to CBasePlayer::m_hViewModel
-#define private public // Need access to CBaseViewModel::m_hScreens
-#include "player.h"
-#include "vguiscreen.h"
-#undef protected
-#undef private
 #include "baseclient.h"
 #include <bitset>
 #include <unordered_set>
@@ -23,7 +17,11 @@
 #include <cmodel_private.h>
 #include "server.h"
 #include "hltvserver.h"
+#define protected public
+#include "player.h"
+#undef protected
 #include "SkyCamera.h"
+#include "sourcesdk/GameEventManager.h"
 
 // memdbgon must be the last include file in a .cpp file!!!
 #include "tier0/memdbgon.h"
@@ -31,14 +29,15 @@
 class CNetworkingModule : public IModule
 {
 public:
-	virtual void InitDetour(bool bPreServer) OVERRIDE;
-	virtual void Shutdown() OVERRIDE;
-	virtual void OnEntityCreated(CBaseEntity* pEntity) OVERRIDE;
-	virtual void OnEntityDeleted(CBaseEntity* pEntity) OVERRIDE;
-	virtual void ClientDisconnect(edict_t* pClient) OVERRIDE;
-	virtual void ServerActivate(edict_t* pEdictList, int edictCount, int clientMax) OVERRIDE;
-	virtual const char* Name() { return "networking"; };
-	virtual int Compatibility() { return LINUX32; }; // ToDo: Fix CBaseClient offset being broken on 64x causing the access to CGameClient::m_pCurrentFrame to return a invalid pointer
+	void Init(CreateInterfaceFn* appfn, CreateInterfaceFn* gamefn) override;
+	void InitDetour(bool bPreServer) override;
+	void Shutdown() override;
+	void OnEntityCreated(CBaseEntity* pEntity) override;
+	void OnEntityDeleted(CBaseEntity* pEntity) override;
+	void ClientDisconnect(edict_t* pClient) override;
+	void ServerActivate(edict_t* pEdictList, int edictCount, int clientMax) override;
+	const char* Name() override { return "networking"; };
+	int Compatibility() override { return LINUX32;  }; // ToDo: Fix CBaseClient offset being broken on 64x causing the access to CGameClient::m_pCurrentFrame to return a invalid pointer
 };
 
 /*
@@ -48,7 +47,7 @@ public:
  * I need to restore and fix the code in Shutdown to allow proper unloading.
  */
 
-CNetworkingModule g_pNetworkingModule;
+static CNetworkingModule g_pNetworkingModule;
 IModule* pNetworkingModule = &g_pNetworkingModule;
 
 /*
@@ -187,13 +186,13 @@ static bool hook_CBaseEntity_GMOD_ShouldPreventTransmitToPlayer(CBaseEntity* ent
 	return g_pShouldPrevent[pPlayerEdict->m_EdictIndex-1].IsBitSet(pEdict->m_EdictIndex);
 }
 
-static void CleaupSetPreventTransmit(CBaseEntity* ent)
+static void CleanupSetPreventTransmit(const CBaseEntity* ent)
 {
-	edict_t* pEdict = ent->edict();
+	const edict_t* pEdict = ent->edict();
 	if (!pEdict)
 		return;
 
-	int entIndex = pEdict->m_EdictIndex;
+	const int entIndex = pEdict->m_EdictIndex;
 	if (!ent->IsPlayer())
 	{
 		for (int i=0; i<MAX_PLAYERS; ++i)
@@ -209,16 +208,16 @@ static void CleaupSetPreventTransmit(CBaseEntity* ent)
 static Detouring::Hook detour_CBaseEntity_GMOD_SetShouldPreventTransmitToPlayer;
 static void hook_CBaseEntity_GMOD_SetShouldPreventTransmitToPlayer(CBaseEntity* pEnt, CBasePlayer* pPly, bool bPreventTransmit)
 {
-	edict_t* pEdict = pEnt->edict();
+	const edict_t* pEdict = pEnt->edict();
 	if (!pEdict)
 		return;
 
-	edict_t* pPlayerEdict = pPly->edict();
+	const edict_t* pPlayerEdict = pPly->edict();
 	if (!pPlayerEdict)
 		return;
 
-	int plyIndex = pPlayerEdict->m_EdictIndex - 1;
-	int entIndex = pEdict->m_EdictIndex;
+	const int plyIndex = pPlayerEdict->m_EdictIndex - 1;
+	const int entIndex = pEdict->m_EdictIndex;
 	if (bPreventTransmit) {
 		g_pShouldPrevent[plyIndex].Set(entIndex);
 	} else {
@@ -230,7 +229,7 @@ static void hook_CBaseEntity_GMOD_SetShouldPreventTransmitToPlayer(CBaseEntity* 
 // HolyLib part
 
 static Detouring::Hook detour_CGMOD_Player_CreateViewModel;
-static ConVar networking_maxviewmodels("holylib_networking_maxviewmodels", "3", 0, "Determins how many view models each player gets.", true, 0, true, 3);
+static ConVar networking_maxviewmodels("holylib_networking_maxviewmodels", "3", 0, "Determines how many view models each player gets.", true, 0, true, 3);
 static void hook_CGMOD_Player_CreateViewModel(CBasePlayer* pPlayer, int viewmodelindex)
 {
 	if (viewmodelindex >= networking_maxviewmodels.GetInt())
@@ -463,7 +462,7 @@ CDatatableStack::CDatatableStack( CSendTablePrecalc *pPrecalc, unsigned char *pS
 	m_ObjectID = objectID;
 	
 	m_iCurProp = 0;
-	m_pCurProp = NULL;
+	m_pCurProp = nullptr;
 
 	m_bInitted = false;
 
@@ -545,7 +544,7 @@ public:
 			CSendNode *pCurChild = pNode->m_Children[iChild];
 			const SendProp *pChildProp = m_pPropMapStackPrecalc->m_DatatableProps[pCurChild->m_iDatatableProp];
 			
-			unsigned char *pNewStructBase = NULL;
+			unsigned char *pNewStructBase = nullptr;
 			if ( pStructBase )
 				pNewStructBase = CallPropProxy( pCurChild, pCurChild->m_iDatatableProp, pStructBase );
 
@@ -688,7 +687,7 @@ public:
 
 public:
 	inline void Init( CBaseEntity *pEntity );
-	inline void AttachEdict( edict_t *pRequiredEdict = NULL );
+	inline void AttachEdict( edict_t *pRequiredEdict = nullptr );
 	inline int	entindex() const { return m_pPev->m_EdictIndex; };
 	inline edict_t *edict() { return m_pPev; };
 	inline const edict_t *edict() const { return m_pPev; };
@@ -740,7 +739,7 @@ inline int CCServerNetworkProperty::AreaNum()
 inline CCServerNetworkProperty* CCServerNetworkProperty::GetNetworkParent()
 {
 	CBaseEntity *pParent = m_hParent.Get();
-	return pParent ? (CCServerNetworkProperty*)pParent->NetworkProp() : NULL;
+	return pParent ? (CCServerNetworkProperty*)pParent->NetworkProp() : nullptr;
 }
 
 static CCollisionBSPData* g_BSPData;
@@ -839,7 +838,7 @@ static inline void CBitVec_AndNot(CBitVec<MAX_EDICTS>* a, const CBitVec<MAX_EDIC
 
 /*
  * For now this is called from the pvs module meaning we RELY on it.
- * What did we change? basicly nothing yet. I'm just testing around.
+ * What did we change? basically nothing yet. I'm just testing around.
  * 
  * NOTE: It's shit & somehow were loosing performance to something. Probably us detouring it is causing our performance loss.
  */
@@ -848,26 +847,26 @@ static CBaseEntity* g_pEntityCache[MAX_EDICTS] = {nullptr};
 bool g_pReplaceCServerGameEnts_CheckTransmit = false;
 static edict_t* world_edict = nullptr;
 
-// Offset & helper functins
+// Offset & helper functions
 
 static DTVarByOffset m_Local_Offset("DT_LocalPlayerExclusive", "m_Local");
 static DTVarByOffset m_SkyBox3DArea_Offset("DT_Local", "m_skybox3d.area");
 static inline int GetSkybox3DArea(const void* pPlayer) // Fully safe access :3
 {
-	void* pLocal = m_Local_Offset.GetPointer(pPlayer);
+	const void* pLocal = m_Local_Offset.GetPointer(pPlayer);
 	if (!pLocal)
 		return 255; // 255 is the default max value used so we just fallback to that.
 
-	void* pSkybox3DArea = m_SkyBox3DArea_Offset.GetPointer(pLocal);
+	const void* pSkybox3DArea = m_SkyBox3DArea_Offset.GetPointer(pLocal);
 	if (!pSkybox3DArea)
 		return 255;
 
 	return *(int*)pSkybox3DArea;
 }
 
-static inline CBaseEntity* IndexToEntity(int nEntIndex)
+static inline CBaseEntity* IndexToEntity(const int nEntIndex)
 {
-	if (nEntIndex < 0 || nEntIndex > MAX_EDICTS)
+	if (nEntIndex < 0 || nEntIndex >= MAX_EDICTS)
 		return nullptr;
 
 	return g_pEntityCache[nEntIndex];
@@ -886,13 +885,13 @@ static inline CBaseEntity* GetActiveWeapon(const void* pPlayer)
 }
 
 static DTVarByOffset m_hMyWeapons_Offset("DT_BaseCombatCharacter", "m_hMyWeapons", sizeof(CBaseCombatWeaponHandle));
-static inline CBaseEntity* GetMyWeapon(const void* pPlayer, int nWeaponSlot)
+static inline CBaseEntity* GetMyWeapon(const void* pPlayer, const int nWeaponSlot)
 {
 	return IndexToEntity(((CBaseCombatWeaponHandle*)m_hMyWeapons_Offset.GetPointerArray(pPlayer, nWeaponSlot))->GetEntryIndex());
 }
 
 static DTVarByOffset m_hViewModel_Offset("DT_BasePlayer", "m_hViewModel", sizeof(CBasePlayer::CBaseViewModelHandle));
-static inline CBaseViewModel* GetViewModel(const void* pPlayer, int nViewModelSlot)
+static inline CBaseViewModel* GetViewModel(const void* pPlayer, const int nViewModelSlot)
 {
 	return (CBaseViewModel*)IndexToEntity(((CBasePlayer::CBaseViewModelHandle*)m_hViewModel_Offset.GetPointerArray(pPlayer, nViewModelSlot))->GetEntryIndex());
 }
@@ -1041,8 +1040,8 @@ struct EntityTransmitCache // Well.... Still kinda acts as a tick-based cache, t
 
 	int nPVSEdictCount = -1;
 	int nFullEdictCount = -1;
-	CBaseEntity* nPVSEntityList[MAX_EDICTS] = {NULL};
-	CBaseEntity* nFullEntityList[MAX_EDICTS] = {NULL};
+	CBaseEntity* nPVSEntityList[MAX_EDICTS] = {nullptr};
+	CBaseEntity* nFullEntityList[MAX_EDICTS] = {nullptr};
 };
 static EntityTransmitCache g_nEntityTransmitCache;
 
@@ -1077,6 +1076,28 @@ struct PlayerTransmitCache
 	CBitVec<MAX_EDICTS> pWeaponTransmitBits; // These are ALWAYS transmitted
 };
 static PlayerTransmitCache g_pPlayerTransmitCache[MAX_PLAYERS];
+
+class NetworkingGameEventListener : public IGameEventListener2
+{
+public:
+	NetworkingGameEventListener() = default;
+
+	void FireGameEvent(IGameEvent* pEvent)
+	{
+		if (V_stricmp(pEvent->GetName(), "OnRequestFullUpdate") != 0)
+			return;
+		
+		int nPlayerSlot = pEvent->GetInt("index");
+		if (nPlayerSlot >= MAX_PLAYERS || nPlayerSlot < 0)
+		{
+			Warning(PROJECT_NAME " - networking: Invalid OnRequestFullUpdate event! (Index: %i)\n", nPlayerSlot);
+			return;
+		}
+
+		// g_pPlayerTransmitCache[nPlayerSlot].MarkFullUpdate();
+	}
+};
+static NetworkingGameEventListener g_pNetworkGameEventListener;
 
 // Per tick cache
 // Reset every tick using memset to 0!
@@ -1230,7 +1251,7 @@ static void TransmitFastPathPlayer(CBasePlayer* pRecipientPlayer, int clientInde
 	if (pInfo->m_pTransmitAlways)
 		nOtherCache.pClientBitVec.CopyTo(pInfo->m_pTransmitAlways);
 
-	// g_pPlayerTransmitCacheBitVec won't contain any information about the client the cache was build upon, so we need to call SetTransmit ourselfs.
+	// g_pPlayerTransmitCacheBitVec won't contain any information about the client the cache was build upon, so we need to call SetTransmit ourselves.
 	// & yes, using the g_pEntityCache like this is safe, even if it doesn't look save - Time to see how long it'll take until I regret writing this
 	g_pEntityCache[iOtherClient+1]->SetTransmit(pInfo, true);
 	pRecipientPlayer->SetTransmit(pInfo, true);
@@ -1261,7 +1282,7 @@ static void TransmitFastPathPlayer(CBasePlayer* pRecipientPlayer, int clientInde
 				CBasePlayer* pObserverPlayer = (CBasePlayer*)pObserverEntity;
 				for (int iViewModel=0; iViewModel<MAX_VIEWMODELS; ++iViewModel)
 				{
-					CBaseViewModel* pViewModel = GetViewModel(pRecipientPlayer, iViewModel); // Secret dependency on g_pEntityList
+					CBaseViewModel* pViewModel = GetViewModel(pObserverPlayer, iViewModel);
 					if (pViewModel)
 						pViewModel->SetTransmit(pInfo, true);
 				}
@@ -1289,7 +1310,7 @@ static inline void DoTransmitPVSCheck(edict_t* pEdict, CBaseEntity* pEnt, const 
 	CCServerNetworkProperty *netProp = static_cast<CCServerNetworkProperty*>( pEdict->GetNetworkable() );
 	if ( !netProp )
 	{
-		Warning(PROJECT_NAME " - networking: Somehow CCServerNetworkProperty was NULL!\n");
+		Warning(PROJECT_NAME " - networking: Somehow CCServerNetworkProperty was nullptr!\n");
 		return;
 	}
 
@@ -1306,14 +1327,14 @@ static inline void DoTransmitPVSCheck(edict_t* pEdict, CBaseEntity* pEnt, const 
 
 	// Always send entities in the player's 3d skybox.
 	// Sidenote: call of AreaNum() ensures that PVS data is up to date for this entity
-	bool bSameAreaAsSky = netProp->AreaNum() == skyBoxArea;
+	const bool bSameAreaAsSky = netProp->AreaNum() == skyBoxArea;
 	if ( bSameAreaAsSky )
 	{
 		pEnt->SetTransmit( pInfo, true );
 		return;
 	}
 
-	bool bInPVS = netProp->IsInPVS( pInfo );
+	const bool bInPVS = netProp->IsInPVS( pInfo );
 	if ( bInPVS || bForceTransmit )
 	{
 		// only send if entity is in PVS
@@ -1329,8 +1350,8 @@ static inline void DoTransmitPVSCheck(edict_t* pEdict, CBaseEntity* pEnt, const 
 	// resolve them in a second pass.  Not sure what happens if an entity has two parents who both request PVS check?
 	while ( check )
 	{
-		edict_t *checkEdict = check->edict();
-		int checkIndex = checkEdict->m_EdictIndex;
+		const edict_t *checkEdict = check->edict();
+		const int checkIndex = checkEdict->m_EdictIndex;
 
 		// Parent already being sent
 		if ( pInfo->m_pTransmitEdict->Get( checkIndex ) )
@@ -1343,7 +1364,7 @@ static inline void DoTransmitPVSCheck(edict_t* pEdict, CBaseEntity* pEnt, const 
 		// if ( g_pDontTransmitCache.Get( checkIndex ) )
 		//	break;
 
-		int checkFlags = checkEdict->m_fStateFlags & (FL_EDICT_DONTSEND|FL_EDICT_ALWAYS|FL_EDICT_PVSCHECK|FL_EDICT_FULLCHECK);
+		const int checkFlags = checkEdict->m_fStateFlags & (FL_EDICT_DONTSEND|FL_EDICT_ALWAYS|FL_EDICT_PVSCHECK|FL_EDICT_FULLCHECK);
 		if ( checkFlags & FL_EDICT_DONTSEND )
 			break;
 
@@ -1357,7 +1378,7 @@ static inline void DoTransmitPVSCheck(edict_t* pEdict, CBaseEntity* pEnt, const 
 		{
 			// do a full ShouldTransmit() check, may return FL_EDICT_CHECKPVS
 			CBaseEntity *pCheckEntity = g_pEntityCache[checkIndex];
-			int nFlags = pCheckEntity->ShouldTransmit( pInfo );
+			const int nFlags = pCheckEntity->ShouldTransmit( pInfo );
 			// Assert( !(nFlags & FL_EDICT_FULLCHECK) );
 			if ( nFlags & FL_EDICT_ALWAYS )
 			{
@@ -1371,7 +1392,7 @@ static inline void DoTransmitPVSCheck(edict_t* pEdict, CBaseEntity* pEnt, const 
 		{
 			// Check pvs
 			check->RecomputePVSInformation();
-			bool bMoveParentInPVS = check->IsInPVS( pInfo );
+			const bool bMoveParentInPVS = check->IsInPVS( pInfo );
 			if ( bMoveParentInPVS )
 			{
 				pEnt->SetTransmit( pInfo, true );
@@ -1409,19 +1430,20 @@ bool New_CServerGameEnts_CheckTransmit(IServerGameEnts* gameents, CCheckTransmit
 		return true; // We don't return false since we never want to transmit anything to a player in a invalid slot!
 
 	g_pPlayerTransmitCache[clientIndex].NextTick(); // Tick in advance
-	const Vector& clientPosition = (pRecipientPlayer->GetViewEntity() != NULL) ? pRecipientPlayer->GetViewEntity()->EyePosition() : pRecipientPlayer->EyePosition();
+	const Vector& clientPosition = (pRecipientPlayer->GetViewEntity() != nullptr) ? pRecipientPlayer->GetViewEntity()->EyePosition() : pRecipientPlayer->EyePosition();
 	const int clientArea = networking_fastpath_usecluster.GetBool() ? Util::engineserver->GetClusterForOrigin(clientPosition) : Util::engineserver->GetArea(clientPosition);
 
-	// NOTE: We intentionally use GetArea and not GetCluster, since a Area is far bigger than a cluster & it should work good enouth.
+	// NOTE: We intentionally use GetArea and not GetCluster, since a Area is far bigger than a cluster & it should work good enough.
 	// Possible BUG: The PVS might hate us for doing such a cruel thing to it. Anyways >:3
 
 	// ToDo: Bring over's CS:GO code for InitialSpawnTime
 	//const bool bIsFreshlySpawned = pRecipientPlayer->GetInitialSpawnTime()+3.0f > gpGlobals->curtime;
 
 	// pRecipientPlayer->IsHLTV(); Why do we not use IsHLTV()? Because its NOT a virtual function & the variables are fked
-	const bool bIsHLTV = pInfo->m_pTransmitAlways != NULL;
+	const int nCurrentTick = gpGlobals->tickcount;
+	const bool bIsHLTV = pInfo->m_pTransmitAlways != nullptr;
 	const bool bFastPath = networking_fastpath.GetBool();
-	const bool bFirstTransmit = g_pGlobalTransmitTickCache.IsNewTick(gpGlobals->tickcount);
+	const bool bFirstTransmit = g_pGlobalTransmitTickCache.IsNewTick(nCurrentTick);
 	if (bFirstTransmit)
 	{
 		if (bFastPath)
@@ -1472,7 +1494,7 @@ bool New_CServerGameEnts_CheckTransmit(IServerGameEnts* gameents, CCheckTransmit
 			continue;
 
 		// do a full ShouldTransmit() check, may return FL_EDICT_CHECKPVS
-		int nFlags = pEnt->ShouldTransmit(pInfo);
+		const int nFlags = pEnt->ShouldTransmit(pInfo);
 		if (nFlags & FL_EDICT_ALWAYS)
 		{
 			pEnt->SetTransmit(pInfo, true);
@@ -1594,7 +1616,7 @@ bool New_CServerGameEnts_CheckTransmit(IServerGameEnts* gameents, CCheckTransmit
 	if (bFastPath && !bIsHLTV && !(pRecipientPlayer->GetObserverMode() == OBS_MODE_IN_EYE && pRecipientPlayer->GetObserverTarget()))
 	{
 		PlayerTransmitTickCache& nTransmitCache = g_pPlayerTransmitTickCache[clientIndex];
-		// Remove player's viewmodels from the cache since thoes are supposed to only be networked to the recipient player
+		// Remove player's viewmodels from the cache since those are supposed to only be networked to the recipient player
 
 		pInfo->m_pTransmitEdict->CopyTo(&nTransmitCache.pClientBitVec);
 		CBitVec_AndNot(&nTransmitCache.pClientBitVec, &pClientCache);
@@ -1627,6 +1649,10 @@ void SV_FillHLTVData( CFrameSnapshot *pSnapshot, edict_t *edict, int iValidEdict
 	}
 }
 
+#if MODULE_EXISTS_NETWORKINGREPLACEMENT
+extern bool g_bRedirectPackEntity;
+extern void NWR_SV_PackEntity(int edictIdx, edict_t* edict, ServerClass* pServerClass, CFrameSnapshot *pSnapshot);
+#endif
 static Symbols::PackWork_t_Process func_PackWork_t_Process;
 static Symbols::SV_PackEntity func_SV_PackEntity;
 struct PackWork_t
@@ -1637,6 +1663,14 @@ struct PackWork_t
 
 	static void Process( PackWork_t &item )
 	{
+#if MODULE_EXISTS_NETWORKINGREPLACEMENT
+		if (g_bRedirectPackEntity)
+		{
+			NWR_SV_PackEntity( item.nIdx, item.pEdict, item.pSnapshot->m_pEntities[ item.nIdx ].m_pClass, item.pSnapshot );
+			return;
+		}
+#endif
+
 #if SYSTEM_LINUX
 		func_PackWork_t_Process(item);
 #else
@@ -1653,6 +1687,8 @@ void PackEntities_Normal(int clientCount, CGameClient **clients, CFrameSnapshot 
 	Assert( snapshot->m_nValidEntities >= 0 && snapshot->m_nValidEntities <= MAX_EDICTS );
 	// tmZoneFiltered( TELEMETRY_LEVEL0, 50, TMZF_NONE, "%s %d", __FUNCTION__, snapshot->m_nValidEntities );
 
+	// g_nEntityTransmitCache.FinishNetworking();
+
 	int workItemCount = 0;
 	static PackWork_t workItems[MAX_EDICTS];
 	/*
@@ -1668,10 +1704,16 @@ void PackEntities_Normal(int clientCount, CGameClient **clients, CFrameSnapshot 
 		bool seen[MAX_EDICTS] = {false};
 		for (int iClient = 0; iClient < clientCount; ++iClient)
 		{
-			CClientFrame *frame = clients[iClient]->m_pCurrentFrame;
+			if (!clients[iClient])
+				continue;
+
+			const CClientFrame *frame = clients[iClient]->m_pCurrentFrame;
+			if (!frame)
+				continue;
+
 			for (int iValidEdict = 0; iValidEdict < snapshot->m_nValidEntities; ++iValidEdict)
 			{
-				int index = snapshot->m_pValidEntities[iValidEdict];
+				const int index = snapshot->m_pValidEntities[iValidEdict];
 				if (!seen[index] && frame->transmit_entity.Get(index))
 				{
 					seen[index] = true;
@@ -1681,7 +1723,7 @@ void PackEntities_Normal(int clientCount, CGameClient **clients, CFrameSnapshot 
 
 		for (int iValidEdict = 0; iValidEdict < snapshot->m_nValidEntities; ++iValidEdict)
 		{
-			int index = snapshot->m_pValidEntities[iValidEdict];
+			const int index = snapshot->m_pValidEntities[iValidEdict];
 
 			edict_t* edict = &world_edict[index];
 			SV_FillHLTVData(snapshot, edict, iValidEdict);
@@ -1696,7 +1738,7 @@ void PackEntities_Normal(int clientCount, CGameClient **clients, CFrameSnapshot 
 	} else {
 		for (int iValidEdict = 0; iValidEdict < snapshot->m_nValidEntities; ++iValidEdict)
 		{
-			int index = snapshot->m_pValidEntities[iValidEdict];
+			const int index = snapshot->m_pValidEntities[iValidEdict];
 
 			edict_t* edict = &world_edict[index];
 			SV_FillHLTVData(snapshot, edict, iValidEdict);
@@ -1724,46 +1766,16 @@ void PackEntities_Normal(int clientCount, CGameClient **clients, CFrameSnapshot 
 	}
 	else
 	{
-		intp c = workItemCount;
+		const intp c = workItemCount;
 		for ( intp i = 0; i < c; ++i )
 		{
 			PackWork_t &w = workItems[ i ];
-#if SYSTEM_LINUX
-			func_PackWork_t_Process(w);
-#else
-			func_SV_PackEntity( w.nIdx, w.pEdict, w.pSnapshot->m_pEntities[ w.nIdx ].m_pClass, w.pSnapshot );
-#endif
+			PackWork_t::Process(w);
 		}
 	}
 
 	func_InvalidateSharedEdictChangeInfos();
 }
-
-/*void SV_ComputeClientPacks( 
-	int clientCount, 
-	CGameClient **clients,
-	CFrameSnapshot *snapshot )
-{
-	MDLCACHE_CRITICAL_SECTION_(g_pMDLCache);
-
-	{
-		VPROF_BUDGET_FLAGS( "SV_ComputeClientPacks", "CheckTransmit", BUDGETFLAG_SERVER );
-
-		for (int iClient = 0; iClient < clientCount; ++iClient)
-		{
-			CCheckTransmitInfo *pInfo = &clients[iClient]->m_PackInfo;
-			clients[iClient]->SetupPackInfo( snapshot );
-			Util::servergameents->CheckTransmit( pInfo, snapshot->m_pValidEntities, snapshot->m_nValidEntities );
-			clients[iClient]->SetupPrevPackInfo();
-		}
-	}
-
-	VPROF_BUDGET_FLAGS( "SV_ComputeClientPacks", "ComputeClientPacks", BUDGETFLAG_SERVER );
-
-	// Fk local network backdoor, we expect holylib to rarely run on a local server so it's not worth to implement.
-
-	PackEntities_Normal( clientCount, clients, snapshot );
-}*/
 
 void CNetworkingModule::OnEntityDeleted(CBaseEntity* pEntity)
 {
@@ -1771,21 +1783,17 @@ void CNetworkingModule::OnEntityDeleted(CBaseEntity* pEntity)
 	if (!pEdict)
 		return;
 
-	g_nEntityTransmitCache.EntityRemoved(pEdict);
-	CleaupSetPreventTransmit(pEntity);
-	int entIndex = pEdict->m_EdictIndex;
-	g_pEntityCache[entIndex] = NULL;
+	// g_nEntityTransmitCache.EntityRemoved(pEntity, pEdict);
+	CleanupSetPreventTransmit(pEntity);
+	g_pEntityCache[pEdict->m_EdictIndex] = nullptr;
+	g_pForceWeaponTransmitIndexes.Clear(pEdict->m_EdictIndex);
 }
 
 void CNetworkingModule::OnEntityCreated(CBaseEntity* pEntity)
 {
-	//auto mod = GetOrCreateEntityModule<SendpropOverrideModule>(pEntity, "sendpropoverride");
-	//mod->AddOverride(CallbackPluginCall, precalcIndex, prop, callbacks.size() - 1);
-	edict_t* pEdict = pEntity->edict();
+	const edict_t* pEdict = pEntity->edict();
 	if (pEdict)
-	{
 		g_pEntityCache[pEdict->m_EdictIndex] = pEntity;
-	}
 }
 
 void CNetworkingModule::ClientDisconnect(edict_t* pPlayer)
@@ -1815,9 +1823,14 @@ DETOUR_THISCALL_START()
 DETOUR_THISCALL_FINISH();
 #endif
 
+void CNetworkingModule::Init(CreateInterfaceFn* appfn, CreateInterfaceFn* gamefn)
+{
+	Util::gameeventmanager->AddListener(&g_pNetworkGameEventListener, "OnRequestFullUpdate", true);
+}
+
 static SendTable* playerSendTable;
 static ServerClass* playerServerClass;
-static CFrameSnapshotManager* framesnapshotmanager = NULL;
+static CFrameSnapshotManager* framesnapshotmanager = nullptr;
 static CSharedEdictChangeInfo* g_SharedEdictChangeInfo = nullptr;
 static ServerClassCache *player_class_cache = nullptr;
 static CStandardSendProxies* sendproxies;
@@ -1850,25 +1863,25 @@ void CNetworkingModule::InitDetour(bool bPreServer)
 	Detour::Create(
 		&detour_CBaseEntity_GMOD_SetShouldPreventTransmitToPlayer, "CBaseEntity::GMOD_SetShouldPreventTransmitToPlayer",
 		server_loader.GetModule(), Symbols::CBaseEntity_GMOD_SetShouldPreventTransmitToPlayerSym,
-		(void*)hook_CBaseEntity_GMOD_SetShouldPreventTransmitToPlayer, m_pID
+		(void*)DETOUR_THISCALL(hook_CBaseEntity_GMOD_SetShouldPreventTransmitToPlayer, GMOD_SetShouldPreventTransmitToPlayer), m_pID
 	);
 
 	Detour::Create(
 		&detour_CBaseEntity_GMOD_ShouldPreventTransmitToPlayer, "CBaseEntity::GMOD_ShouldPreventTransmitToPlayer",
 		server_loader.GetModule(), Symbols::CBaseEntity_GMOD_ShouldPreventTransmitToPlayerSym,
-		(void*)hook_CBaseEntity_GMOD_ShouldPreventTransmitToPlayer, m_pID
+		(void*)DETOUR_THISCALL(hook_CBaseEntity_GMOD_ShouldPreventTransmitToPlayer, GMOD_ShouldPreventTransmitToPlayer), m_pID
 	);
 
 	Detour::Create(
 		&detour_CGMOD_Player_CreateViewModel, "CGMOD_Player::CreateViewModel",
 		server_loader.GetModule(), Symbols::CGMOD_Player_CreateViewModelSym,
-		(void*)hook_CGMOD_Player_CreateViewModel, m_pID
+		(void*)DETOUR_THISCALL(hook_CGMOD_Player_CreateViewModel, CreateViewModel), m_pID
 	);
 
 	Detour::Create(
 		&detour_CBaseCombatCharacter_SetTransmit, "CBaseCombatCharacter::SetTransmit",
 		server_loader.GetModule(), Symbols::CBaseCombatCharacter_SetTransmitSym,
-		(void*)hook_CBaseCombatCharacter_SetTransmit, m_pID
+		(void*)DETOUR_THISCALL(hook_CBaseCombatCharacter_SetTransmit, SetTransmit), m_pID
 	);
 
 #if SYSTEM_LINUX
@@ -1929,21 +1942,14 @@ void CNetworkingModule::InitDetour(bool bPreServer)
 	}
 
 	framesnapshotmanager = Detour::ResolveSymbol<CFrameSnapshotManager>(engine_loader, Symbols::g_FrameSnapshotManagerSym);
-	Detour::CheckValue("get class", "framesnapshotmanager", framesnapshotmanager != NULL);
+	Detour::CheckValue("get class", "framesnapshotmanager", framesnapshotmanager != nullptr);
 
 #if ARCHITECTURE_IS_X86
 	PropTypeFns* pPropTypeFns = Detour::ResolveSymbol<PropTypeFns>(engine_loader, Symbols::g_PropTypeFnsSym);
 #else
 	PropTypeFns* pPropTypeFns = Detour::ResolveSymbolWithOffset<PropTypeFns>(engine_loader.GetModule(), Symbols::g_PropTypeFnsSym);
 #endif
-	Detour::CheckValue("get class", "pPropTypeFns", pPropTypeFns != NULL);
-
-#if ARCHITECTURE_IS_X86
-	g_BSPData = Detour::ResolveSymbol<CCollisionBSPData>(engine_loader, Symbols::g_BSPDataSym);
-#else
-	g_BSPData = Detour::ResolveSymbolWithOffset<CCollisionBSPData>(engine_loader.GetModule(), Symbols::g_BSPDataSym);
-#endif
-	Detour::CheckValue("get class", "CCollisionBSPData", g_BSPData != NULL);
+	Detour::CheckValue("get class", "pPropTypeFns", pPropTypeFns != nullptr);
 	
 	if (pPropTypeFns)
 	{
@@ -1979,6 +1985,12 @@ void CNetworkingModule::InitDetour(bool bPreServer)
 
 void CNetworkingModule::ServerActivate(edict_t* pEdictList, int edictCount, int clientMax)
 {
+	if (pEdictList)
+	{
+		for (int i=0; i<edictCount; ++i)
+			g_pEntityCache[i] = Util::GetCBaseEntityFromEdict(&pEdictList[i]);
+	}
+
 	sv_force_transmit_ents = g_pCVar->FindVar("sv_force_transmit_ents");
 
 	// Find player class (has DT_BasePlayer as a baseclass table)
@@ -2127,6 +2139,8 @@ void CNetworkingModule::Shutdown()
 		return;
 	}
 
+	Util::gameeventmanager->RemoveListener(&g_pNetworkGameEventListener);
+
 	/*
 	 * The code below to unload also belongs to sigsegv
 	 * Source: https://github.com/rafradek/sigsegv-mvm/blob/e6a6cee305023f36e5b914872500ef8319317d71/src/mod/perf/sendprop_optimize.cpp#L1981-L2002
@@ -2186,7 +2200,7 @@ void WriteSendProp(SendProp* pProp, int nIndex, int nIndent, FileHandle_t pHandl
 	WriteString(pName, nIndent, pHandle);
 
 	std::string pExcludeDTName = "ExcludeName: ";
-	pExcludeDTName.append(pProp->GetExcludeDTName() != NULL ? pProp->GetExcludeDTName() : "NULL");
+	pExcludeDTName.append(pProp->GetExcludeDTName() != nullptr ? pProp->GetExcludeDTName() : "nullptr");
 	WriteString(pExcludeDTName, nIndent, pHandle);
 
 	std::string pOffset = "Offset: ";
@@ -2260,9 +2274,9 @@ void WriteSendProp(SendProp* pProp, int nIndex, int nIndent, FileHandle_t pHandl
 	}
 	WriteString(pType, nIndent, pHandle);
 
-	std::string pElemets = "NumElement: ";
-	pElemets.append(std::to_string(pProp->GetNumElements()));
-	WriteString(pElemets, nIndent, pHandle);
+	std::string pElements = "NumElement: ";
+	pElements.append(std::to_string(pProp->GetNumElements()));
+	WriteString(pElements, nIndent, pHandle);
 
 	std::string pBits = "Bits: ";
 	pBits.append(std::to_string(pProp->m_nBits));
