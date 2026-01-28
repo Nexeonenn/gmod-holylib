@@ -1679,7 +1679,7 @@ bool New_CServerGameEnts_CheckTransmit(IServerGameEnts* gameents, CCheckTransmit
 
 	const int clientEntIndex = pInfo->m_pClientEnt->m_EdictIndex;
 	static CBitVec<MAX_EDICTS> pClientCache; // Temporary cache used when we are calculating the transmit to the current pRecipientPlayer
-	const bool bForceTransmit = sv_force_transmit_ents->GetBool();
+	const bool bForceTransmit = sv_force_transmit_ents ? sv_force_transmit_ents->GetBool() : false;
 	bool bWasTransmitToPlayer = false;
 #if NETWORKING_USE_ENTITYCACHE
 	for (int i=0; i<g_nEntityTransmitCache.nFullEdictCount; ++i)
@@ -2196,7 +2196,8 @@ void CNetworkingModule::ServerActivate(edict_t* pEdictList, int edictCount, int 
 			g_pEntityCache[i] = Util::GetCBaseEntityFromEdict(&pEdictList[i]);
 	}
 
-	sv_force_transmit_ents = g_pCVar->FindVar("sv_force_transmit_ents");
+	if (g_pCVar)
+		sv_force_transmit_ents = g_pCVar->FindVar("sv_force_transmit_ents");
 
 	// Find player class (has DT_BasePlayer as a baseclass table)
 	// We do this in ServerActivate since the engine only now hooked into the ServerClass allowing us to safely use them now.
