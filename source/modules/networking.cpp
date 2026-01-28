@@ -1056,13 +1056,64 @@ void Networking_ForceWeaponTransmit(int entIndex, bool bForceTransmit) // Expose
 }
 
 // Full cache persisting across ticks, reset only when the player disconnects.
+static ConVar* sv_stressbots = nullptr;
+static ConVar networking_transmit_newweapons("holylib_networking_transmit_newweapons", "1", 0, "Experimental - If enabled, weapons that a player equipped/was given are networked for the first x ticks");
+static ConVar networking_transmit_ticks("holylib_networking_transmit_ticks", "-1", 0, "Experimental - How many ticks to use for transmit_newweapons & transmit_onfullupdate. -1 will instead ensure they are networked until the client acknowledges them");
+static ConVar networking_transmit_onfullupdate("holylib_networking_transmit_onfullupdate", "1", 0, "Experimental - If enabled, players and their own weapons are transmitted for the first x ticks when they had a full update");
+static ConVar networking_transmit_onfullupdate_networktoothers("holylib_networking_transmit_onfullupdate_networktoothers", "1", 0, "Experimental - If enabled, any player that has a full update will be networked to everyone");
 struct PlayerTransmitCache
 {
-	// Used for rotating weapon slots when networking
-	int nNextWeaponSlot = 0;
-	inline void NextTick()
+	inline void NextTick(const CBaseEntity* pPlayer, const int nTick)
 	{
-		if (++nNextWeaponSlot >= MAX_WEAPONS)
+		if (!sv_stressbots && g_pCVar)
+			sv_stressbots = g_pCVar->FindVar("sv_stressbots");
+
+		int nTransmitTicks = networking_transmit_ticks.GetInt();
+		if (nTransmitTicks == -1) {
+			CBaseClient* pClient = Util::GetClientByPlayer((const CBasePlayer*)pPlayer);
+			if (pClient) {
+				nLastAcknowledgedTick = pClient->GetMaxAckTickCount(); // pClient->m_nDeltaTick;
+				// Verify: GetMaxAckTickCount may be inaccurate for our use case since we need m_nDeltaTick?
+				// if (pClient->m_nDeltaTick != pClient->GetMaxAckTickCount())
+				// 	DevMsg(PROJECT_NAME " - networking: Interesting... for client %i (ent index) the delta tick %i differs from the MaxAckTick %i (%i)\n", pPlayer->edict()->m_EdictIndex, pClient->m_nDeltaTick, pClient->GetMaxAckTickCount(), nFullUpdateTick);
+				if (pClient->IsFakeClient() && sv_stressbots && !sv_stressbots->GetBool())
+					nLastAcknowledgedTick = gpGlobals->tickcount;
+			} else {
+				DevMsg(PROJECT_NAME " - networking: Failed to get CBaseClient for player %i (ent index)\n", pPlayer->edict()->m_EdictIndex);
+				nLastAcknowledgedTick = nTick - 100; // Fallback though should never happen
+			}
+		} else {
+			nLastAcknowledgedTick = nTick - nTransmitTicks;
+		}
+		
+		for (int i=0; i<MAX_WEAPONS; ++i)
+		{
+			WeaponSlot& pSlot = pWeapons[i];
+			CBaseEntity *pWeapon = GetMyWeapon(pPlayer, i);
+			if (pWeapon)
+			{
+				if (!pSlot.bIsValid || pWeapon != pSlot.pWeapon)
+				{
+					pSlot.bIsValid = true;
+					pSlot.bIsNew = true;
+					pSlot.nCreationTick = nTick;
+					pSlot.pWeapon = pWeapon;
+				} else if (pSlot.nCreationTick < nLastAcknowledgedTick) {
+					pSlot.bIsNew = false;
+				}
+
+				pSlot.bAlwaysNetwork = g_pForceWeaponTransmitIndexes.IsBitSet(pWeapon->edict()->m_EdictIndex);
+
+				nHighestWeaponSlot = i;
+			} else {
+				pSlot.bIsValid = false;
+				pSlot.bIsNew = false;
+				pSlot.bAlwaysNetwork = false;
+			}
+		}
+
+		// If you have less weapons, they will be transmitted more frequently
+		if (++nNextWeaponSlot >= nHighestWeaponSlot)
 			nNextWeaponSlot = 0;
 	}
 
@@ -1071,10 +1122,49 @@ struct PlayerTransmitCache
 		Plat_FastMemset(this, 0, sizeof(PlayerTransmitCache));
 	}
 
+	void MarkFullUpdate()
+	{
+		// DevMsg(PROJECT_NAME " - networking: Triggered fullupdate %i\n", gpGlobals->tickcount);
+		nFullUpdateTick = gpGlobals->tickcount;
+	}
+
+	bool InFullUpdate(int nTick) const
+	{
+		return nFullUpdateTick > nTick;
+	}
+
+	// If the client relative to his own last acknowledged tick
+	bool InFullUpdate() const
+	{
+		// DevMsg(PROJECT_NAME " - networking: InFullUpdate %i - %i\n", nFullUpdateTick, nLastAcknowledgedTick);
+		return nFullUpdateTick >= nLastAcknowledgedTick;
+	}
+
+	bool bIsValid = false;
+
+	int nFullUpdateTick = 0;
 	int nLastAreaNum = 0;
+	int nLastAcknowledgedTick = 0;
 	CBitVec<MAX_EDICTS> pLastTransmitBits; // No use yet
 	CBitVec<MAX_EDICTS> pWeaponTransmitBits; // These are ALWAYS transmitted
+
+	struct WeaponSlot
+	{
+		bool bIsNew = false; // Exists for quick checking to not have to compare numbers
+		bool bIsValid = false;
+		// Transmit state - in case an offhand weapon insists on being an ass requesting to be networked
+		// NOTE: For this to take effect, a weapon must return TRANSMIT_ALWAYS inside Entity:UpdateTransmitState
+		bool bAlwaysNetwork = false;
+		int nCreationTick = 0; // For how many ticks a weapon is considered new
+		CBaseEntity* pWeapon = nullptr; // in case a weapon is removed/given onto the same slot in a tick
+	};
+
+	// Used for rotating weapon slots when networking
+	int nNextWeaponSlot = 0;
+	int nHighestWeaponSlot = 0;
+	WeaponSlot pWeapons[MAX_WEAPONS];
 };
+// NOTE: Index is playerslot / entindex - 1
 static PlayerTransmitCache g_pPlayerTransmitCache[MAX_PLAYERS];
 
 class NetworkingGameEventListener : public IGameEventListener2
@@ -1094,7 +1184,7 @@ public:
 			return;
 		}
 
-		// g_pPlayerTransmitCache[nPlayerSlot].MarkFullUpdate();
+		g_pPlayerTransmitCache[nPlayerSlot].MarkFullUpdate();
 	}
 };
 static NetworkingGameEventListener g_pNetworkGameEventListener;
@@ -1157,13 +1247,13 @@ static void hook_CBaseCombatCharacter_SetTransmit(CBaseCombatCharacter* pCharact
 		return;
 	}
 
-	edict_t* pEdict = pCharacter->edict();
-	if (pInfo->m_pTransmitEdict->Get(pEdict->m_EdictIndex)) // Already being networked!
+	edict_t* pCharacterEdict = pCharacter->edict();
+	if (pInfo->m_pTransmitEdict->Get(pCharacterEdict->m_EdictIndex)) // Already being networked!
 		return;
 
 	func_CBaseAnimating_SetTransmit(pCharacter, pInfo, bAlways); // Base transmit
 
-	bool bLocalPlayer = pInfo->m_pClientEnt == pEdict;
+	const bool bLocalPlayer = pInfo->m_pClientEnt == pCharacterEdict;
 	if (networking_bind_gmodhands_to_player.GetBool())
 	{
 		CBaseEntity* pGMODHands = GetGMODPlayerHands(pCharacter);
@@ -1171,7 +1261,7 @@ static void hook_CBaseCombatCharacter_SetTransmit(CBaseCombatCharacter* pCharact
 			if (bLocalPlayer) {
 				pGMODHands->SetTransmit(pInfo, bAlways);
 			} else { // Hands are only networked to the owner, so we can save some checks by skipping them when going over them later
-				int entIndex = pGMODHands->edict()->m_EdictIndex;
+				const int entIndex = pGMODHands->edict()->m_EdictIndex;
 				g_pDontTransmitCache.Set(entIndex);
 				g_pDontTransmitWeaponCache.Set(entIndex);
 			}
@@ -1187,7 +1277,7 @@ static void hook_CBaseCombatCharacter_SetTransmit(CBaseCombatCharacter* pCharact
 				if (bLocalPlayer) {
 					pViewModel->SetTransmit(pInfo, bAlways);
 				} else {
-					int entIndex = pViewModel->edict()->m_EdictIndex;
+					const int entIndex = pViewModel->edict()->m_EdictIndex;
 					g_pDontTransmitCache.Set(entIndex);
 					g_pDontTransmitWeaponCache.Set(entIndex);
 				}
@@ -1211,7 +1301,7 @@ static void hook_CBaseCombatCharacter_SetTransmit(CBaseCombatCharacter* pCharact
 		if (pActiveWeapon)
 			pActiveWeapon->SetTransmit(pInfo, bAlways);
 
-		int nEdictIndex = pEdict->m_EdictIndex-1;
+		const int nEdictIndex = pCharacterEdict->m_EdictIndex-1;
 		if (!g_bFilledDontTransmitWeaponCache[nEdictIndex])
 		{
 			for ( int i=0; i < MAX_WEAPONS; ++i )
@@ -1227,16 +1317,82 @@ static void hook_CBaseCombatCharacter_SetTransmit(CBaseCombatCharacter* pCharact
 			g_bFilledDontTransmitWeaponCache[nEdictIndex] = true;
 		}
 
+		/*
+			If your out for performance without wanting to loose default behavior the following settings can improve performance while having just a little downside
+
+			holylib_networking_transmit_all_weapons 0
+			holylib_networking_transmit_all_weapons_to_owner 0
+			holylib_networking_transmit_one_per_tick 1
+
+			This way, ONLY the active weapon is always networked and 1 weapon every tick is additionally networked
+			so after 255 Ticks a client will always have received an update for every weapon slot.
+
+			NOTE:
+			If you pick up a weapon and it does not become your active weapon
+			it may happen that the client won't receive an update till that slot is reached leaving them unable to select the weapon
+
+			Newer NOTE:
+			If you don't need constant weapon updates, you can always keep networking_transmit_one_per_tick disabled and instead rely on
+			holylib_networking_transmit_newweapons which will ensure players always know which weapons they have but won't receive constant updates about them.
+		*/
 		if (networking_transmit_one_per_tick.GetInt() == 1 || (networking_transmit_one_per_tick.GetInt() == 2 && bLocalPlayer))
 		{
-			int nSlot = g_pPlayerTransmitCache[pEdict->m_EdictIndex-1].nNextWeaponSlot;
+			int nSlot = g_pPlayerTransmitCache[pCharacterEdict->m_EdictIndex-1].nNextWeaponSlot;
 			CBaseEntity *pWeapon = GetMyWeapon(pCharacter, nSlot);
 			if ( pWeapon )
 			{
 				int entIndex = pWeapon->edict()->m_EdictIndex;
 				g_pDontTransmitCache.Clear(entIndex);
-				g_pDontTransmitCache.Clear(entIndex);
 				// We don't clear g_bFilledDontTransmitWeaponCache to avoid it setting the bits above again
+
+				pWeapon->SetTransmit(pInfo, bAlways);
+			}
+		}
+
+		const PlayerTransmitCache& pCache = g_pPlayerTransmitCache[pCharacterEdict->m_EdictIndex-1];
+		if (bLocalPlayer)
+		{
+			if (networking_transmit_onfullupdate.GetBool() && pCache.InFullUpdate())
+			{
+				// DevMsg(PROJECT_NAME " - networking: Doing full weapon transmit for %i...\n", pCharacterEdict->m_EdictIndex);
+				for (int i=0; i < MAX_WEAPONS; ++i)
+				{
+					CBaseEntity *pWeapon = GetMyWeapon(pCharacter, i);
+					if (!pWeapon)
+						continue;
+
+					pWeapon->SetTransmit(pInfo, bAlways);
+				}
+				return; // We don't gotta do the thing below
+			}
+
+			if (networking_transmit_newweapons.GetBool())
+			{
+				for (int i=0; i < MAX_WEAPONS; ++i)
+				{
+					const PlayerTransmitCache::WeaponSlot& pWeaponSlot = pCache.pWeapons[i];
+					if (pWeaponSlot.bIsNew)
+					{
+						CBaseEntity *pWeapon = GetMyWeapon(pCharacter, i);
+						if (!pWeapon)
+							continue;
+
+						pWeapon->SetTransmit(pInfo, bAlways);
+					}
+				}
+			}
+		}
+
+		// In some cases offhand weapons may want to be transmitted!
+		// This normally is shit! Why would anyone need offhand weapons? Idk, some do!
+		for (int i=0; i < MAX_WEAPONS; ++i)
+		{
+			const PlayerTransmitCache::WeaponSlot& pWeaponSlot = pCache.pWeapons[i];
+			if (pWeaponSlot.bAlwaysNetwork)
+			{
+				CBaseEntity *pWeapon = GetMyWeapon(pCharacter, i);
+				if (!pWeapon)
+					continue;
 
 				pWeapon->SetTransmit(pInfo, bAlways);
 			}
@@ -1429,7 +1585,6 @@ bool New_CServerGameEnts_CheckTransmit(IServerGameEnts* gameents, CCheckTransmit
 	if (clientIndex >= MAX_PLAYERS || clientIndex < 0)
 		return true; // We don't return false since we never want to transmit anything to a player in a invalid slot!
 
-	g_pPlayerTransmitCache[clientIndex].NextTick(); // Tick in advance
 	const Vector& clientPosition = (pRecipientPlayer->GetViewEntity() != nullptr) ? pRecipientPlayer->GetViewEntity()->EyePosition() : pRecipientPlayer->EyePosition();
 	const int clientArea = networking_fastpath_usecluster.GetBool() ? Util::engineserver->GetClusterForOrigin(clientPosition) : Util::engineserver->GetArea(clientPosition);
 
@@ -1449,10 +1604,19 @@ bool New_CServerGameEnts_CheckTransmit(IServerGameEnts* gameents, CCheckTransmit
 		if (bFastPath)
 			Plat_FastMemset(g_pPlayerTransmitTickCache, 0, sizeof(g_pPlayerTransmitTickCache));
 
+		for (int iPlayerIndex = 1; iPlayerIndex <= gpGlobals->maxClients; ++iPlayerIndex)
+		{
+			CBaseEntity* pPlayer = g_pEntityCache[iPlayerIndex];
+			if (!pPlayer)
+				continue;
+
+			g_pPlayerTransmitCache[iPlayerIndex-1].NextTick(pPlayer, nCurrentTick);
+		}
+
 //#if NETWORKING_USE_ENTITYCACHE
 		g_nEntityTransmitCache.UpdateEntities(pEdictIndices, nEdicts);
 //#endif
-		g_pGlobalTransmitTickCache.NewTick(gpGlobals->tickcount);
+		g_pGlobalTransmitTickCache.NewTick(nCurrentTick);
 
 		g_pDontTransmitWeaponCache.ClearAll();
 	} else {
@@ -1479,6 +1643,39 @@ bool New_CServerGameEnts_CheckTransmit(IServerGameEnts* gameents, CCheckTransmit
 		g_pDontTransmitWeaponCache.Or(g_pDontTransmitCache, &g_pDontTransmitCache); // Now combine our cached weapon cache.
 
 	g_nEntityTransmitCache.pNeverTransmitBits.Or(g_pDontTransmitCache, &g_pDontTransmitCache);
+
+
+	if (networking_transmit_onfullupdate.GetBool())
+	{
+		if (g_pPlayerTransmitCache[clientIndex].InFullUpdate())
+		{
+			for (int iPlayerIndex = 1; iPlayerIndex <= gpGlobals->maxClients; ++iPlayerIndex)
+			{
+				// Lets avoid trying to network invalid entity slots as else we trigger a crash/engine error in CBaseServer::WriteDeltaEntities
+				if (!g_pEntityCache[iPlayerIndex])
+					continue;
+
+				// We mark all to transmit to they will receive the CBasePlayer's
+				// but not all their weapon since that could cause a overflow due to the amount of data that could be sent at once
+				pInfo->m_pTransmitEdict->Set(iPlayerIndex);
+				if (bIsHLTV)
+					pInfo->m_pTransmitAlways->Set(iPlayerIndex);
+			}
+		} else if (networking_transmit_onfullupdate_networktoothers.GetBool()) {
+			// In this case, if any other player is having a full update, we network them to all others
+			// simply because this ensures every player knows of every other players existence
+			int nLastAcknowledgedTick = g_pPlayerTransmitCache[clientIndex].nLastAcknowledgedTick;
+			for (int iPlayerIndex = 1; iPlayerIndex <= gpGlobals->maxClients; ++iPlayerIndex)
+			{
+				if (g_pEntityCache[iPlayerIndex] && g_pPlayerTransmitCache[iPlayerIndex-1].InFullUpdate(nLastAcknowledgedTick))
+				{
+					pInfo->m_pTransmitEdict->Set(iPlayerIndex);
+					if (bIsHLTV)
+						pInfo->m_pTransmitAlways->Set(iPlayerIndex);
+				}
+			}
+		}
+	}
 
 	const int clientEntIndex = pInfo->m_pClientEnt->m_EdictIndex;
 	static CBitVec<MAX_EDICTS> pClientCache; // Temporary cache used when we are calculating the transmit to the current pRecipientPlayer
