@@ -1,6 +1,6 @@
 /*
 ** Debug library.
-** Copyright (C) 2005-2025 Mike Pall. See Copyright Notice in luajit.h
+** Copyright (C) 2005-2026 Mike Pall. See Copyright Notice in luajit.h
 **
 ** Major portions taken verbatim or adapted from the Lua interpreter.
 ** Copyright (C) 1994-2008 Lua.org, PUC-Rio. See Copyright Notice in lua.h
@@ -62,7 +62,7 @@ void blockDebug(lua_State* L, GCfunc* func)
     lj_err_arg(L, 1, LJ_ERR_BLOCKDEBUG);
 }
 
-LJLIB_CF(debug_getfenv)
+LJLIB_CF(debug_getfenv)		LJLIB_REC(.)
 {
   TValue* o = lj_lib_checkany(L, 1);
   if (o && tvisfunc(o))
@@ -303,7 +303,7 @@ LJLIB_CF(debug_setuservalue)
 
 /* ------------------------------------------------------------------------ */
 
-#define KEY_HOOK	(U64x(80000000,00000000)|'h')
+#define KEY_HOOK	(U64x(81000000,00000000)|'h')
 
 static void hookf(lua_State *L, lua_Debug *ar)
 {
@@ -415,6 +415,18 @@ LJLIB_CF(debug_traceback)
 }
 
 /* ------------------------------------------------------------------------ */
+
+LJLIB_CF(debug_userdata_setusertable)
+{
+  lua_pushboolean(L, lua_userdata_setusertable(L, 1, lua_toboolean(L, 2)));
+  return 1;
+}
+
+LJLIB_CF(debug_userdata_setmetaaccess)
+{
+  lua_pushboolean(L, lua_userdata_setmetaaccess(L, 1, lua_toboolean(L, 2)));
+  return 1;
+}
 
 #include "lj_libdef.h"
 

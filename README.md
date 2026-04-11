@@ -17,9 +17,9 @@ Does anyone even use windows srcds for actual servers?<br>
 > I'm not actively testing windows, so if I accidentally broke it, open a issue since I most likely didn't know about it.<br>
 
 ## How to Install (Linux 32x)
-1. Download the `ghostinj.dll`, `holylib.vdf` and `gmsv_holylib_linux.so` from the latest release.<br>
+1. Download the `ghostinj.dll`, `holyliblinux.vdf` and `gmsv_holylib_linux.so` from the latest release.<br>
 2. Put the `ghostinj.dll` into the main directory where `srcds_linux` is located.<br>
-3. Put the `holylib.vdf` into the `garrysmod/addons/` directory.<br>
+3. Put the `holylib_linux.vdf` into the `garrysmod/addons/` directory.<br>
 4. Put the `gmsv_holylib_linux.so` into the `garrysmod/lua/bin/` directory.
 5. Add `-usegh` to the servers startup params.<br>
 If you use a panel like Pterodactyl or something similar, you can use the gamemode field (in most cases) like this: `sandbox -usegh`<br>
@@ -27,14 +27,38 @@ If you use a panel like Pterodactyl or something similar, you can use the gamemo
 If you already had a `ghostinj.dll`, you can rename it to `ghostinj2.dll` and it will be loaded by holylib's ghostinj.<br>
 
 ## How to Install (Linux 64x)
-1. Download the `holylib.vdf` and `gmsv_holylib_linux.so` from the latest release.<br>
-2. Put the `holylib.vdf` into the `garrysmod/addons/` directory.<br>
+1. Download the `holylib_linux_64.vdf` and `gmsv_holylib_linux.so` from the latest release.<br>
+2. Put the `holylib_linux_64.vdf` into the `garrysmod/addons/` directory.<br>
 3. Put the `gmsv_holylib_linux.so` into the `garrysmod/lua/bin/` directory.<br>
+
+## How to Install (Windows dedicated)
+1. Download the `holylib_win.vdf`(or the `_64` one) and `gmsv_holylib_[win32/win64].dll` from the latest release.<br>
+2. Put the `holylib_win.vdf` into the `garrysmod/addons/` directory.<br>
+3. Put the `gmsv_holylib_[win32/win64].dll` into the `garrysmod/lua/bin/` directory.<br>
+
+> [!NOTE]
+> If you try to run a Windows client build on a dedicated server it will refuse to load.
+
+## How to Install (Windows client)
+1. Download the `gmsv_holylib_[win32/win64].dll` from the latest release.<br>
+2. Put the `gmsv_holylib_[win32/win64].dll` into the `garrysmod/lua/bin/` directory.<br>
+3. Add into `garrysmod/lua/menu/menu.lua` at the end `require('holylib')`
+
+> [!NOTE]
+> If you try to run a Windows dedicated build on a Windows client it will refuse to load.
 
 ## Custom Builds (Linux Only)
 You can fork this repository and use the `Build Custom Version` to create a custom HolyLib version that only contains specific functions.<br>
 I heard from some that they don't want a huge DLL of which they only use a few functions of,<br>
 so by making a custom build, anyone can include just the stuff they actually want and need, nothing else.<br>
+
+## Dev Builds
+Every commit triggers a compile workflow, resulting in a dev build<br>
+All of those can be found under the `Actions` tab -> https://github.com/RaphaelIT7/gmod-holylib/actions<br>
+
+> [!IMPORTANT]
+> These builds focus on the GMod `dev` branch currently.<br>
+> If you attempt to use a build on a server running on the `public` branch you **may** experience issues or even crashes.<br>
 
 ## How to update (Newer GhostInj)
 
@@ -86,15 +110,14 @@ This is done by first deleting the current `gmsv_holylib_linux[64].so` and then 
 \- [+] Added LZ4 compression for newly implemented net channel.<br>
 \- [+] Added `util.CompressLZ4` & `util.DecompressLZ4` to `util` module.<br>
 \- [+] Implemented a custom `CNetChan` for faster Server <-> Server connections. See https://github.com/RaphaelIT7/gmod-holylib/issues/42<br>
-\- [+] Added `HolyLib.ReceiveClientMessage` to `HolyLib` module.<br>
+\- [+] Added `HolyLib.ReceiveClientMessage` & `HolyLib.GetEnvironmentValue` (See https://github.com/RaphaelIT7/gmod-holylib/issues/139) to `HolyLib` module.<br>
 \- [+] Added `physenv.IVP_NONE` flag to `physenv` module.<br>
 \- [+] Added a few stringtable related functions to the `stringtable` module.<br>
-\- [+] Added a new hook `HolyLib:OnClientTimeout` to the `gameserver` module.<br>
-\- [+] Optimized `GM:PlayerCanHearPlayersVoice` by **only** calling it for actively speaking players/when a voice packet is received.<br>
+\- [+] Added a new hook `HolyLib:OnClientTimeout` & `HolyLib:OnClientExecuteStringCommand` to the `gameserver` module.<br>
 \- [+] Added `voicechat.LoadVoiceStreamFromWaveString`, `voicechat.ApplyEffect`, `voicechat.IsPlayerTalking` & `voicechat.LastPlayerTalked` to the `voicechat` module.<br>
 \- [+] Added `VoiceStream:ResetTick`, `VoiceStream:GetNextTick`, `VoiceStream:GetCurrentTick`, `VoiceStream:GetPreviousTick` to the `voicechat` module.<br>
 \- [+] Added `util.FancyJSONToTable` & `util.AsyncTableToJSON` to the `util` module.<br>
-\- [+] Added `gameserver.GetClientByUserID` & `gameserver.GetClientBySteamID` to the `gameserver` module.<br>
+\- [+] Added `gameserver.GetClientByUserID` & `gameserver.GetClientBySteamID` & `gameserver.GetCPUUsage` (See https://github.com/RaphaelIT7/gmod-holylib/pull/136) to the `gameserver` module.<br>
 \- [+] Added a config system allowing one to set convars without using the command line.<br>
 \- [+] Added `IPhysicsEnvironment:SetInSimulation` to the `physenv` module.<br>
 \- [+] Added `HttpResponse:SetStatusCode` to `httpserver` module. (See https://github.com/RaphaelIT7/gmod-holylib/pull/62)<br>
@@ -104,6 +127,11 @@ This is done by first deleting the current `gmsv_holylib_linux[64].so` and then 
 \- [+] Added a fallback method for HolyLib's internal `Util::PushEntity` function in case a Gmod update breaks our offsets which previously lead to undefined behavior<br>
 \- [+] Added a `ILuaThreadedCall` to call all modules Think function when HolyLib is loaded as a binary module/loaded using `require("holylib")`<br>
 \- [+] Added a new DLL system if anything wants to be loaded with HolyLib. (See: [example-module-dll](https://github.com/RaphaelIT7/gmod-holylib/tree/f937ba454b4d86edfc72df9cb3f8a689d7de2571/example-module-dll))<br>
+\- [+] Added JIT support to some C functions & to our `__index` and `__newindex` functions.<br>
+\- [+] Added `steamworks.GetGameServerSteamID` to the `steamworks` module.<br>
+\- [+] Added `HolyLib:OnLuaRunString` hook to the `holylib` module.<br>
+\- [+] Added `pvs.SetMaxViewDistance` & `pvs.PreventTransmitAllExcept` to the `pvs` module.<br>
+\- [+] Added the `-norcon` option for the `httpserver` module to disable RCON and free the TCP port, allowing one to run an httpserver on the gameserver port instead.<br>
 \- [#] Added missing numeric key conversion to `util.FancyJSONToTable` (See https://github.com/RaphaelIT7/gmod-holylib/pull/105)<br>
 \- [#] Added some more safeguards to `IPhysicsEnvironment:Simulate` to prevent one from simulating a environment that is already being simulated. (else you might end up with all memory freed & a certain crash)<br>
 \- [#] Highly optimized `util` module's json code to be noticeably faster and use noticeably less memory.<br>
@@ -164,6 +192,14 @@ This is done by first deleting the current `gmsv_holylib_linux[64].so` and then 
 \- [#] Fixed `holylib_filesystem_splitgamepath` breaking searchpath separation. It now only takes effects for the `GAME` path<br>
 \- [#] Fixed `INetworkStringTable:GetStringUserData` not fully pushing the userdata as a string<br>
 \- [#] Changed internal code to use `ArgError` instead of `ThrowError` where possible to improve Lua errors when invalid function arguments are given<br>
+\- [#] Removed dependency on bass allowing HolyLib to be loaded on Windows srcds
+\- [#] Fixed LuaJIT breaking with FTZ & DAZ XMCSR flags<br>
+\- \- Our LuaJIT build will now save, override and restore the flags when entering and exiting the VM<br>
+\- [#] Fixed our FFI Vector & Angle implementations failing to handle input strings<br>
+\- [#] Fixed our FFI Vector's `:GetNormalized` function returning a number instead of a vector (See https://github.com/RaphaelIT7/gmod-holylib/issues/130)<br>
+\- [#] Improved thread safety for lua state access<br>
+\- [#] Fixed workshop map being prioritied over local map version (See https://github.com/RaphaelIT7/gmod-holylib/issues/138)<br>
+\- [#] Fixed our LuaJIT build failing to call `gmod13_unload` when closing a module (See https://github.com/RaphaelIT7/gmod-holylib/issues/140)<br>
 \- [-] Removed some unused code of former fixes that were implemented into GMod<br>
 
 You can see all changes/commits here:<br>
@@ -177,8 +213,7 @@ https://github.com/RaphaelIT7/gmod-holylib/compare/Release0.7...main
 \- [+] Added `directData` argument to `VoiceStream:GetData`, `VoiceStream:GetIndex`, `VoiceStream:SetIndex` and `VoiceStream:SetData`<br>
 \- [+] Added overflow checks for `gameserver.BroadcastMessage`, `CNetChan:SendMessage` and `CBaseClient:SendNetMsg` when you try to use a overflowed buffer<br>
 \- [+] Added a few more arguments to `HolyLib:OnPhysicsLag` like `phys1`, `phys2`, `recalcPhys`, `callerFunction` and the arguments `ent1` & `ent2` were removed since you can call `PhysObj:GetEntity`<br>
-\- [+] Added `steamworks.GetGameServerSteamID` to the `steamworks` module.<br>
-\- [+] Added `HolyLib:OnLuaRunString` hook to the `holylib` module.<br>
+\- [+] Added `holylib_gameserver_maxplayers` allowing the player queue to support up to 8192 players (in theory more but you'd never need more)<br>
 \- [#] Fixed `addonsystem.ShouldMount` & `addonsystem.SetShouldMount` `workshopID` arguments being a number when they should have been a string.<br>
 \- [#] Changed `VoiceData:GetUncompressedData` to now returns a statusCode/a number on failure instead of possibly returning a garbage string.<br>
 \- [#] Limited `HttpServer:SetName` to have a length limit of `64` characters.<br>
@@ -194,8 +229,10 @@ https://github.com/RaphaelIT7/gmod-holylib/compare/Release0.7...main
 \- [#] Changed `HttpServer:[Get/Put/Post/OtherShit]` callback return value to be flipped, return `false` to mark a request as `NOT` handled, return `true` to mark it as handled<br>
 \- [#] Fixed `networking` module partially not working without the `pvs` module - it internally had depended on it.<br>
 \- [#] Fixed `stringtable.CreateStringTable` and `stringtable.CreateStringTableEx` both failing to catch the case in which all stringtable slots were used leading to a server error/shutdown.<br>
+\- [#] Fixed pvs.GetEntitiesFromTransmit failing internally due to it using the wrong value<br>
 \- [#] Changed callback arguments of `HttpServer:[Get/Put/Post/Patch/Delete/Options]` to remove the `response`.<br>
 \- \-> The `HttpRequest` now contains all methods of the `HttpResponse` so you should use the `request` directly! (This was done to help the Lua GC a bit & slightly improve callback performance)<br>
+\- [#] Fixed `HttpServer:IsRunning()` falsely reporting `true` even if it failed to start.<br>
 \- [-] Removed `VoiceData:GetUncompressedData` decompress size argument<br>
 \- [-] Removed `CBaseClient:Transmit` third argument `fragments`.<br>
 \- [-] Removed `gameserver.CalculateCPUUsage` and `gameserver.ApproximateProcessMemoryUsage` since they never worked.<br>
@@ -276,6 +313,10 @@ Wiki: https://holylib.raphaelit7.com/
 \- [autorefresh](https://github.com/RaphaelIT7/gmod-holylib#autorefresh)<br>
 \- [soundscape](https://github.com/RaphaelIT7/gmod-holylib#soundscape)<br>
 \- [networkthreading](https://github.com/RaphaelIT7/gmod-holylib#networkthreading)<br>
+\- [luagc](https://github.com/RaphaelIT7/gmod-holylib#luagc)<br>
+\- [crashhandler](https://github.com/RaphaelIT7/gmod-holylib#crashhandler)<br>
+\- [gmoddatapack](https://github.com/RaphaelIT7/gmod-holylib#gmoddatapack)<br>
+\- [unholylib](https://github.com/RaphaelIT7/gmod-holylib#unholylib)<br>
 
 [Unfinished Modules](https://github.com/RaphaelIT7/gmod-holylib#unfinished-modules)<br>
 \- [serverplugins](https://github.com/RaphaelIT7/gmod-holylib#serverplugins)<br>
@@ -424,6 +465,9 @@ local entity = Entity(0) -- We can use the world but normally we shouldn't.
 local userID = entity:IsPlayer() and entity:UserID() or -1
 HolyLib.ReceiveClientMessage(userID, entity, readBF, readBF:GetNumBits())
 ```
+
+#### string HolyLib.GetEnvironmentValue(string name)
+Returns the found environment variable or returns `nil`<br>
 
 ### Hooks
 
@@ -1006,6 +1050,17 @@ Adds the given Entity to be transmitted.
 > Only use this function inside the `HolyLib:PreCheckTransmit` hook!<br>
 > Do **not** use it inside `HolyLib:PostCheckTransmit` since its blocked there due to else needing some expensive changes.<br>
 
+#### pvs.PreventTransmitAllExcept(Entity ent / table ents / EntityList list, int ignoreFlags = 0)
+table ents - A sequential table containing all the entities that should be transmitted.<br>
+
+Sets the `DONTSEND` flag on all entities that are **NOT** inside the given table for the current transmit.<br>
+This function is basically the same as calling `pvs.OverrideStateFlags(ents, pvs.FL_EDICT_DONTSEND)` but excluding the entities you want to network<br>
+saving some overhead since you only have to give us a table with entities that you want to be networked while all others are excluded.<br>
+
+> [!NOTE]
+> Only use this function inside the `HolyLib:PreCheckTransmit` hook!<br>
+> It has no effect when used in `HolyLib:PostCheckTransmit`<br>
+
 #### (REMOVED AGAIN) pvs.IsEmptyBaseline()
 Returns `true` if the baseline is empty.<br>
 This should always be the case after a full update.<br>
@@ -1041,6 +1096,17 @@ Returns a table containing all entities that will be networked.<br>
 Allows you to mark a weapon to be forcefully transmitted even when offhand.<br>
 The weapon will remain to be forcefully transmitted until this is called with false again or the weapon is removed!<br>
 This is only useful if you use the `networking` module with the `holylib_networking_transmit_all_weapons 0` and `holylib_networking_transmit_all_weapons_to_owner 0`<br>
+
+#### pvs.SetMaxViewDistance(number range)
+Sets the maximum range in which PVS entities should be transmitted in for the **NEXT** transmit<br>
+The range check is implemented just before the IsInPVS check internally, so it will respect previous checks like if it's in the 3d skybox.<br>
+
+> [!IMPORTANT]
+> This function requires the `networking` module and will throw an error if it's missing<br>
+> Additionally it requires `holylib_networking_fasttransmit 1` as else it won't have an effect!<br>
+
+> [!NOTE]
+> Only use this function inside the `HolyLib:PreCheckTransmit` or `GM:SetupPlayerVisibility` hook or it will throw an error!<br>
 
 #### pvs.EnablePreTransmitHook(bool enable = false)
 Enables/Disables the `HolyLib:PreCheckTransmit` hook.<br>
@@ -2567,8 +2633,6 @@ Returns the length of the data.<br>
 Returns the slot of the player this voicedata is originally from.<br>
 
 #### string VoiceData:GetUncompressedData()
-number decompressSize - The number of bytes to allocate for decompression.<br>
-
 Returns the uncompressed voice data or an empty string if the VoiceData had no data.<br>
 On failure it will return the number for the status code, see the list below:<br>
 ```cpp
@@ -2587,6 +2651,9 @@ enum EVoiceResult
 	k_EVoiceResultReceiverDidNotAnswer = 9,
 };
 ```
+
+#### VoiceData:SetUncompressedData(string data)
+Sets the uncompressed voice data<br>
 
 #### bool VoiceData:GetProximity()
 Returns if the VoiceData is in proximity.<br>
@@ -3720,6 +3787,9 @@ Supports: Linux32 | Linux64 | Windows32 | Windows64<br>
 #### EntityList CreateEntityList()
 Creates a new EntityList.
 
+#### EntityList CreateEntityListFromGlobal()
+Creates a new EntityList containing all entities the internal global entity list contains<br>
+
 #### table GetGlobalEntityList()
 Returns all entities that are in the global entity list.<br>
 
@@ -3771,8 +3841,15 @@ Adds the given entity to the list.<br>
 #### EntityList:RemoveEntity(Entity ent)
 Removes the given entity from the list.<br>
 
+#### EntityList EntityList:CreateCopy()
+Returns a new EntityList that contains the exact same values as this list (This is way faster than manually creating a copy)<br>
+
 ## httpserver
 This module adds a library with functions to create and run a httpserver.<br>
+
+> [!NOTE]
+> If you want to run an httpserver on your gameserver port, then you **must** add `-norcon` to the command line.<br>
+> This is due to RCON creating a TCP socket blocking the httpserver from using that so you must disable RCON to use an httpserver on the gameserver port!<br>
 
 ### Functions
 
@@ -3848,6 +3925,9 @@ Sets the maximum amount of connections that can be kept alive at the same time.
 The number of ms threads sleep before checking again if a request was handled.<br>
 Useful to raise it when you let requests wait for a while.
 
+#### HttpServer:SetThreads(number minThreads, number maxThreads)
+Sets how many threads the httpserver can use.<br>
+
 #### HttpServer:SetMountPoint(string mountPoint, string folder)
 This mounts the given folder to the given path.
 
@@ -3870,8 +3950,9 @@ Returns the name set by `HttpServer:SetName()`, defaults to `NONAME`
 Sets the name of the HttpServer.<br>
 The length of the name is limited to 64 characters.
 
-#### (Experimental) HttpServer:AddPreparedResponse(number userID, string path, string method, table headers, function callback)
+#### (Experimental) HttpServer:AddPreparedResponse(number userID, string path, string method, table headers, function callback, number uses = 1)
 callback - function(HttpResponse response)<br>
+uses - How often this prepared response is used before it's discarded.<br>
 
 Adds a prepared response for the given userID.<br>
 A prepared response won't make any lua call when it matches a incoming request, multiple responses can be queued as their responses in order.<br>
@@ -3988,6 +4069,9 @@ Returns the player who sent the HTTP Request or `nil` if it didn't find it.<br>
 #### string HttpRequest:GetPathParam(string param)
 Returns the value of the given parameter or `nil` if it wasn't found.<br>
 
+#### string HttpRequest:GetPath(string name)
+Returns the path of the request
+
 #### string HttpRequest:MarkHandled()
 Marks this request as handled, invalidating this object and the linked `HttpResponse`<br>
 This function is meant to be used when you `return true` in the HttpServer:[Get/Put/OtherStuff] callback function allowing you to delay a response.<br>
@@ -4100,6 +4184,9 @@ Checks if the function is set to be inaccessible by any debug function.<br>
 #### `luajit.enableFFI = false`
 If set to `true`, `jit.require` will exist and `jit.getffi` will return ffi.<br>
 
+#### `luajit.enableFFIOverrides = true`
+If set to `true` the `VectorFFI`, `AngleFFI` and other scripts are loaded as class overrides for improved performance<br>
+
 #### `luajit.keepRemovedDebugFunctions = false`
 If set to `true`, all debug function listed below are restored.<br>
 `debug.setlocal`, `debug.setupvalue`, `debug.upvalueid` and `debug.upvaluejoin`<br>
@@ -4134,7 +4221,10 @@ Returns the CGameClient for the given userID or `nil` on failure.<br>
 Returns the CGameClient for the given steamID or `nil` on failure. (steamID not steamID64!)<br>
 
 #### number gameserver.GetClientCount()
-returns client count for iteration of `gameserver.GetClient`<br>
+Returns client count for iteration of `gameserver.GetClient`<br>
+
+#### number gameserver.GetCPUUsage()
+Returns current CPU usage: number [0-1]<br>
 
 > [!NOTE]
 > This will include inactive `CGameClient`'s since the engine re-uses them and doesn't delete them on disconnect.<br>
@@ -4242,6 +4332,18 @@ bf:WriteString("Hello World")
 gameserver.SendConnectionlessPacket(bf, "loopback:" .. gameserver.GetUDPPort(), false, gameserver.NS_CLIENT)
 ```
 
+#### CGameClient gameserver.CreateFakeClient(string name)
+Creates a fake client or returns NULL on failure<br>
+
+#### CGameClient gameserver.CreateNewClient()
+Creates a new client or returns NULL on failure<br>
+
+#### CGameClient gameserver.GetFreeClient(string address, bool useDNS = false)
+Searches if there is a `CGameClient` with the given address already and returns their object OR attempts to create a new client.<br>
+
+#### number gameserver.GetSocket()
+Returns the server's socket
+
 #### CNetChan gameserver.CreateNetChannel(string ip, bool useDNS = false, number protocolVersion = 1, number socket = NS_SERVER)
 ip - The target ip. Format `ip:port`<br>
 Creates a net channel for the given ip.
@@ -4328,6 +4430,12 @@ Server socket.
 
 #### gameserver.NS_HLTV = 2
 HLTV socket.
+
+#### gameserver.FLOW_OUTGOING = 0
+Outgoing flow
+
+#### gameserver.FLOW_INCOMING = 1
+Incoming flow
 
 ### CBaseClient
 This class represents a client.
@@ -4498,6 +4606,10 @@ Returns `true` on success.<br>
 > Gmod seamingly has some backup code inside `CBaseClient::ProcessClientInfo`,<br>
 > that kicks a player with `Server connection error, please try again` if they don't have a valid steamid.
 
+#### bool CBaseClient:HasNetChannel()
+Returns `true` if the client has a net channel.<br>
+This is useful for example, when working with fake clients and using `sv_stressbots`<br>
+
 ---
 
 ### CBaseClient (CNetChannel functions)
@@ -4613,6 +4725,18 @@ concommand.Add("biggerBuffer", function(ply)
 	client:SetMaxBufferSize(true, 524288) -- We resize the reliable stream
 end)
 ```
+
+#### number CBaseClient:GetMaxRoutablePayloadSize()
+Returns the max routable payload size - this is the MTU for packets before they are fragmented!<br>
+
+#### number CBaseClient:GetTimeConnected()
+Returns the time they connected.<br>
+
+#### number CBaseClient:GetAvgLatency(number flow)
+Returns the average latency for the given flow. (Use the `gameserver.FLOW_` enums!)<br>
+
+#### number CBaseClient:GetAvgLoss(number flow)
+Returns the average loss for the given flow. (Use the `gameserver.FLOW_` enums!)<br>
 
 ### CGameClient
 This class inherits CBaseClient.
@@ -4998,6 +5122,10 @@ Called when a client is marked as timing out.<br>
 Return a time in seconds to extent his timeout duration.<br>
 If `0` or a number below `0` is returned, the client will be kicked normally for timing out.<br>
 
+#### bool HolyLib:OnClientExecuteStringCommand(CGameClient client, string command)
+Called when a client attempts to execute a console command.<br>
+Return `true` to block/cancel execution.<br>
+
 ### ConVars
 
 #### holylib_gameserver_disablespawnsafety (default `0`)
@@ -5006,6 +5134,17 @@ Added to satisfy curiosity & test around with slots above 128.
 
 #### holylib_gameserver_connectionlesspackethook (default `1`)
 If enabled, the HolyLib:ProcessConnectionlessPacket hook is active and will be called.
+
+#### holylib_gameserver_rawclients (default `0`)
+If enabled, `CGameClient` that are empty / have no active player are still considered valid allowing you to access them<br>
+`CGameClient:__tostring()` will return `CGameClient [EMPTY]` for empty clients!<br>
+
+> [!NOTE]
+> Internally it checks using `CBaseClient:IsConnected()` to see if a client is empty or not!
+
+#### holylib_gameserver_maxplayers (default `128`)
+The amount of max players a server can have.<br>
+Going above `128` will result in queue slots, which are slots into which players can join but won't be able to spawn as.<br>
 
 ### sv_filter_nobanresponse (default `0`)
 If enabled, a blocked ip won't be informed that its even blocked.
@@ -5022,8 +5161,17 @@ Use the `HolyLib:OnSetSignonState` to keep players at the `SIGNONSTATE_NEW` unti
 ### Player Queue System
 Using this module's functionality you can implement a player queue were players wait in the loading screen until they spawn when a slot gets free.
 
-Example implementation:
+> [!IMPORTANT]
+> Queued clients do not occupy a "real" server slot, instead they hold a slot created and fully managed by HolyLib.<br>
+> This results in the server having **no idea** that the client even exists, resulting in things like `status` or `kickid` not working for queued clients.<br>
+> The `gameserver` functions do, however, account for queued clients and will return and work with them, meaning you'd have to implement your own kick command.<br>
+> This was done for two reasons:<br>
+> 1) the old implementation wasted edicts and was quite unstable due to the engine not liking that many clients (going above m_nMaxclients)<br>
+> 2) if Rubat increased the player limit, our previous queue slots (which were the unused 127 slots) would have been gone.<br>
+
+Example implementation (includes an example `status_queue` command):
 ```lua
+RunConsoleCommand("holylib_gameserver_maxplayers", "255") -- Raise player limit
 playerQueue = playerQueue or {
 	count = 0
 }
@@ -5064,6 +5212,48 @@ end)
 
 hook.Add("HolyLib:OnPlayerChangedSlot", "Example", function(oldPlayerSlot, newPlayerSlot)
 	print("Client was moved from slot " .. oldPlayerSlot .. " to slot " .. newPlayerSlot)
+end)
+
+concommand.Add("status_queue", function(ply, cmd, args)
+	if IsValid(ply) then return end -- Only for console
+
+	// We won't provide version & udp/ip & steamid.
+	// The gameserver API will already account for the queue and include them in results
+	MsgN("hostname: " .. gameserver.GetName())
+	MsgN("map: " .. gameserver.GetMapName())
+	MsgN("players : " .. gameserver.GetNumClients() .. " humans, " .. gameserver.GetNumFakeClients() .. "bots (" .. gameserver.GetMaxClients() .. " max)")
+	MsgN(string.format(
+		"%-3s %-8s %-20s %-20s %-10s %-5s %-5s %-10s",
+		"#", "userid", "name", "uniqueid", "connected", "ping", "loss", "state"
+	))
+
+	for _, client in ipairs(gameserver.GetAll()) do
+		local state = "challenging"
+		if client:IsActive() then
+			state = "active"
+		elseif client:GetSignonState() == SIGNONSTATE_PRESPAWN and client:GetPlayerSlot() >= game.MaxPlayers() then
+			-- If the client is in an above max players slot and at PRESPAWN they have been blocked for spawning
+			-- and are now waiting for your Lua script to let them be spawned
+			state = "queued"
+		elseif client:IsSpawned() then
+			state = "spawning"
+		elseif client:IsConnected() then
+			state = "connecting"
+		end
+
+		local hasNetChannel = client:HasNetChannel()
+		MsgN(string.format(
+			"%-3s %-8d %-20s %-20s %-10s %-5d %-5d %-10s",
+			"#",
+			client:GetUserID(),
+			"\"" .. client:GetName() .. "\"",
+			client:GetSteamID(),
+			hasNetChannel and tostring(math.floor(CurTime() - client:GetTimeConnected())) or "",
+			hasNetChannel and math.floor(client:GetAvgLatency(gameserver.FLOW_OUTGOING)) or 0,
+			hasNetChannel and math.floor(client:GetAvgLatency(gameserver.FLOW_INCOMING)) or 0,
+			state
+		))
+	end
 end)
 ```
 
@@ -5343,6 +5533,17 @@ Now what this module does - it prevents writing NW2Vars into the baseline ensuri
 This is loaded as the first module and catches crashes to include more information about HolyLib at the time of the crash.<br>
 Unlike other crash handlers, ours won't affect the generated `debug.log` allowing us to create our own crash dump AND to also get a useful `debug.log` at the same time.<br>
 
+### Functions
+
+#### crashhandler.DisableWatcher()
+Disables the watcher thread useful when you for example, have to do a lot of work and may freeze the main thread for many seconds<br>
+
+#### crashhandler.EnableWatcher()
+Enables the watcher thread after you've disabled it & internally resets the waiting time.<br>
+
+#### crashhandler.ResetWatcher()
+Resets the watcher thread's waiting time<br>
+
 ### Hooks
 
 #### HolyLib:OnServerCrash(string crashedModule)
@@ -5351,6 +5552,82 @@ Unlike other crash handlers, ours won't affect the generated `debug.log` allowin
 Inside this hook, the server is in a weird state.<br>
 It allows you to attempt to save data **but** try not to cause memory allocations or such, as the entire server will be in a very fragile state.<br>
 The Lua GC is stopped when this hook is called to further reduce the chance of Lua crashing due to instability<br>
+
+### ConVars
+
+#### holylib_crashhandler_crashtime = 10000
+Time in ms after which the crash handler will catch and nuke the server
+
+## gmoddatapack
+This module changes how GMod's data pack compresses files by compressing them once set instead of delaying the compression until a person joins to avoid having a lag spike and increased loading times when initially joining. <br>
+This is not that useful by itself, though when you're developing and do lots of map changes or restarts this can save a bit of time.<br>
+Additionally using the <page>holylib_gmoddatapack_removeserverif</page> and <page>holylib_gmoddatapack_removecomments</page> convars, it can strip files reducing size further.
+
+### Functions
+
+#### string gmoddatapack.StripCode(string code, bool removeServerCode = (ConVar Setting), bool removeComments = (ConVar Setting), function tokenizeContent = nil)
+`removeServerCode` fallback value is the convar value `holylib_gmoddatapack_removeserverif`<br>
+`removeComments` fallback value is the convar value `holylib_gmoddatapack_removecomments`<br>
+`tokenizeContent` if given a function it is called exactly like `HolyLib:OnTokenizeContent` allowing you to modify the tokens.<br>
+
+Strips the code based off the settings and returns the new stripped code.<br>
+
+#### string gmoddatapack.GetStoredCode(string fileName)
+Returns the processed code that is stored, this will be the code that is sent to clients.<br>
+Returns `nil` if it didn't find the file or something else went wrong.<br>
+
+### number gmoddatapack.GetCompressedSize(string fileName)
+Returns the compressed size of the code, this is the size that is sent to the client.<br>
+Returns `nil` if it didn't find the file or something else went wrong.<br>
+
+### gmoddatapack.MarkAsTokenizeThread()
+Marks **this** lua state to be the one called for the `HolyLib:OnTokenizeContent` hook.<br>
+
+### Enums
+Inside the `gmoddatapack` table you can find all `TK_` enums like `TK_INVALID = 0`, `TK_FUNCTION = 2` and such.<br>
+
+### Hooks
+
+#### table HolyLib:OnTokenizeContent(table tokens, number fileID)
+This hook is called while the contents of a Lua file are being processed.<br>
+Table entries are sequential - each entry is a table with the following fields:<br>
+\- bool isSpace<br>
+\- number type<br>
+\- string content<br>
+
+Return value can be a new table of tokens, which will be used as the new contents, or return nil for no change<br>
+
+> [!NOTE]
+> This hook is called by the worker thread, and only one lua state can be marked for calling it!
+
+### ConVars
+
+#### holylib_gmoddatapack_removeserverif = 0
+If enabled, server code will be removed from the lua files before they are sent to clients.<br>
+Currently this only works for `if SERVER then` or `elseif SERVER then`, yes you can use `( )` but if you do `if !CLIENT then` it won't recognize it!<br>
+
+#### holylib_gmoddatapack_removecomments = 0
+If enabled, comments from lua files will be removed before they are sent to clients.<br>
+
+#### holylib_gmoddatapack_fastnetworking = 0
+(Very Experimental)<br>
+If enabled, it'll attempt a faster method of sending lua files to the client.<br>
+
+> [!NOTE]
+> This internally depends on the `gameserver` module being enabled!<br>
+
+## unholylib
+This is an unsafe library with the purpose of providing different ways to mess with the engine for fun.<br>
+
+### Functions
+
+#### unholylib.SetCurTime(number time)
+Attempts to set CurTime to the given value
+
+#### unholylib.SetEntIndex(entity ent, number index)
+Sets the EntIndex of the given entity, internally it will attempt to move the entity into the given edict slot.<br>
+If the edict slot is already used, it will **swap** the entities.<br>
+If the new index is `-1` then it will make the entity a server-only entity.<br>
 
 # Unfinished Modules
 
