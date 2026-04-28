@@ -123,7 +123,7 @@ GCudata* g_pEntityReferences[MAX_EDICTS] = {nullptr}; // nulled out in Util::Ini
 int g_pEntitySerialNum[MAX_EDICTS] = {-1};
 
 IModuleWrapper* Util::pEntityList;
-static Symbols::CBaseEntity_GetLuaEntity func_CBaseEntity_GetLuaEntity = nullptr;
+Symbols::CBaseEntity_GetLuaEntity func_CBaseEntity_GetLuaEntity = nullptr;
 void Util::Push_Entity(GarrysMod::Lua::ILuaInterface* LUA, CBaseEntity* pEnt)
 {
 	if (!pEnt)

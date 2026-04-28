@@ -305,8 +305,11 @@ LUA_FUNCTION_STATIC(GetLadder)
 
 static bool bInMoveTypeCall = false; // If someone calls SetMoveType inside the hook, we don't want a black hole to form.
 static Detouring::Hook detour_CBaseEntity_SetMoveType;
+extern Symbols::CBaseEntity_GetLuaEntity func_CBaseEntity_GetLuaEntity;
 static void hook_CBaseEntity_SetMoveType(CBaseEntity* pEnt, int iMoveType, int iMoveCollide)
 {
+	GarrysMod::Lua::CLuaObject* pObj = func_CBaseEntity_GetLuaEntity(pEnt);
+
 	int iCurrentMoveType = pEnt->GetMoveType();
 	if (!bInMoveTypeCall && iCurrentMoveType != iMoveType && Lua::PushHook("HolyLib:OnMoveTypeChange"))
 	{
