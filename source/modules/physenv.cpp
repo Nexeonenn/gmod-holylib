@@ -17,7 +17,6 @@
 //#include "sourcesdk/cphysicsobject.h"
 //#include "sourcesdk/cphysicsenvironment.h"
 #include <detouring/classproxy.hpp>
-#include "unordered_set"
 #include "player.h"
 #include "tier1/tier1.h"
 #define DLL_TOOLS
@@ -423,6 +422,19 @@ static void hook_IVP_Mindist_Manager_recheck_ov_element(void* mindistManager, GM
 
 	g_pCurrentRecheckOVElement.pop_back();
 }
+
+static Detouring::Hook detour_IVP_Mindist_Minimize_Solver_p_minimize_PK;
+GMODSDK::IVP_MRC_TYPE hook_IVP_Mindist_Minimize_Solver_p_minimize_PK(void* _this, const GMODSDK::IVP_Compact_Edge* P, const GMODSDK::IVP_Compact_Edge* K, IVP_Cache_Ledge_Point* m_cache_P, IVP_Cache_Ledge_Point* m_cache_K)
+{
+	if (!P || !K || !m_cache_P || !m_cache_K)
+	{
+		DevMsg(PROJECT_NAME " - physenv: Invalid Edge(P - %p | K - %p | m_cache_P - %p | m_cache_K - %p)!\n", P, K, m_cache_P, m_cache_K);
+		// Returning IVP_MRC_ALREADY_CALCULATED or IVP_MRC_ILLEGAL would result in an engine errror!
+		return GMODSDK::IVP_MRC_TYPE::IVP_MRC_ENDLESS_LOOP;
+	}
+
+	return detour_IVP_Mindist_Minimize_Solver_p_minimize_PK.GetTrampoline<Symbols::IVP_Mindist_Minimize_Solver_p_minimize_PK>()(_this, P, K, m_cache_P, m_cache_K);
+}
 #endif
 
 bool g_pForceOriginalIVP = false;
@@ -645,8 +657,8 @@ public:
 };
 #endif
 
-static std::unordered_map<IPhysicsEnvironment*, ILuaPhysicsEnvironment*> g_pEnvironmentToLua;
-static std::unordered_map<IPhysicsObject*, ILuaPhysicsEnvironment*> g_pObjects; // contains all IPhysicsObject that exist
+static unordered_map<IPhysicsEnvironment*, ILuaPhysicsEnvironment*> g_pEnvironmentToLua;
+static unordered_map<IPhysicsObject*, ILuaPhysicsEnvironment*> g_pObjects; // contains all IPhysicsObject that exist
 #if PHYSENV_INCLUDEIVPFALLBACK
 static inline void RegisterPhysicsObject(ILuaPhysicsEnvironment* pEnv, IPhysicsObject* pObject);
 #endif
@@ -731,7 +743,7 @@ struct ILuaPhysicsEnvironment
 
 	bool bCreatedEnvironment = false; // If we were the one that created the environment.
 #if PHYSENV_INCLUDEIVPFALLBACK
-	std::unordered_set<IPhysicsObject*> pObjects;
+	unordered_set<IPhysicsObject*> pObjects;
 #endif
 	
 	IPhysicsEnvironment* pEnvironment = nullptr;
@@ -2514,7 +2526,7 @@ void CPhysEnvModule::LuaInit(GarrysMod::Lua::ILuaInterface* pLua, bool bServerIn
 		LUA_REGISTER_JIT(pLua, CPhysPolysoup_GetTable, "GetTable");
 	pLua->Pop(1);
 
-	Lua::GetLuaData(pLua)->RegisterMetaTable(Lua::CPhysCollide, pLua->CreateMetaTable("CPhysCollide"));
+	Lua::GetLuaData(pLua)->RegisterMetaTable(Lua::CPhysConvex, pLua->CreateMetaTable("CPhysConvex"));
 		Util::AddFunc(pLua, CPhysConvex__tostring, "__tostring");
 		Util::AddFunc(pLua, CPhysConvex__index, "__index");
 		Util::AddFunc(pLua, CPhysConvex__newindex, "__newindex");
@@ -2840,6 +2852,12 @@ void CPhysEnvModule::InitDetour(bool bPreServer)
 			&detour_IVP_Mindist_Manager_recheck_ov_element, "IVP_Mindist_Manager::recheck_ov_element",
 			vphysics_loader.GetModule(), Symbols::IVP_Mindist_Manager_recheck_ov_elementSym,
 			(void*)hook_IVP_Mindist_Manager_recheck_ov_element, m_pID
+		);
+
+		Detour::Create(
+			&detour_IVP_Mindist_Minimize_Solver_p_minimize_PK, "IVP_Mindist_Minimize_Solver::p_minimize_PK",
+			vphysics_loader.GetModule(), Symbols::IVP_Mindist_Minimize_Solver_p_minimize_PKSym,
+			(void*)hook_IVP_Mindist_Minimize_Solver_p_minimize_PK, m_pID
 		);
 
 		func_IVP_Mindist_Base_get_objects = (Symbols::IVP_Mindist_Base_get_objects)Detour::GetFunction(vphysics_loader.GetModule(), Symbols::IVP_Mindist_Base_get_objectsSym);

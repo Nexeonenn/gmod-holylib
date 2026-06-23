@@ -21,6 +21,37 @@ TValue* RawLua::index2adr(lua_State* L, int idx)
 	return lua_index2adr(L, idx); // We exposed it in LuaJIT so that we don't have to implement it ourself again.
 }
 
+TValue* RawLua::FastIndex2Addr(lua_State* L, int nStackPos)
+{
+  TValue *o = L->base + (nStackPos - 1);
+  return o < L->top ? o : niltv(L);
+}
+
+TValue* RawLua::LuaTop(lua_State* L)
+{
+  return L->top;
+}
+
+TValue* RawLua::LuaIncrTop(lua_State* L)
+{
+  return L->top++;
+}
+
+TValue* RawLua::LuaBase(lua_State* L)
+{
+  return L->base;
+}
+
+TValue* RawLua::GlobalJITBase(lua_State* L)
+{
+    return tvref(G(L)->jit_base);
+}
+
+lua_State* RawLua::MainState(lua_State* L)
+{
+    return mainthread(G(L));
+}
+
 TValue* RawLua::CopyTValue(lua_State* L, TValue* o)
 {
 	TValue* newO = new TValue;

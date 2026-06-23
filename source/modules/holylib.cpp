@@ -11,7 +11,6 @@
 #include "net.h"
 #include "sourcesdk/baseclient.h"
 #include "hl2/hl2_player.h"
-#include "unordered_set"
 #include "host_state.h"
 #include "detouring/customclassproxy.hpp"
 
@@ -289,10 +288,7 @@ static inline CBaseEntity* GetLadder(void* pPlayer)
 	if (!pLadder)
 		return nullptr;
 
-	if (!g_pEntityList)
-		return Util::GetCBaseEntityFromIndex(((EHANDLE*)pLadder)->GetEntryIndex());
-
-	return ((EHANDLE*)pLadder)->Get();
+	return Util::GetCBaseEntityFromHandle(*(EHANDLE*)pLadder);
 }
 
 LUA_FUNCTION_STATIC(GetLadder)
@@ -335,7 +331,7 @@ static void hook_CBaseEntity_SetMoveType(CBaseEntity* pEnt, int iMoveType, int i
 	detour_CBaseEntity_SetMoveType.GetTrampoline<Symbols::CBaseEntity_SetMoveType>()(pEnt, iMoveType, iMoveCollide);
 }
 
-static std::unordered_set<std::string> g_pHideMsg;
+static unordered_set<std::string> g_pHideMsg;
 LUA_FUNCTION_STATIC(HideMsg) // ToDo: Final logic is still missing.
 {
 	std::string pRegex = LUA->CheckString(1);

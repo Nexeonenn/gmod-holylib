@@ -9,10 +9,10 @@
 #include "sourcesdk/ivp_old/ivp_classes.h"
 #endif
 
-#if ARCHITECTURE_IS_X86_64
-using ThreadId_t = uint64;
+#ifdef PLATFORM_64BITS
+typedef uint64 ThreadId_t;
 #else
-using ThreadId_t = unsigned long;
+typedef uint32 ThreadId_t;
 #endif
 
 using FileHandle_t = void*;
@@ -126,6 +126,9 @@ struct ThreadPoolStartParams_t;
  * 1 - Linux 64x
  * 2 - Windows 32x
  * 3 - Windows 64x
+ * 4 - Windows Dedicated 32x (falls back to Windows 32x if non existent)
+ * 5 - Windows Dedicated 64x (falls back to Windows 64x if non existent)
+ * 6 - Windows 64x DEV
  */
 namespace Symbols
 {
@@ -364,7 +367,7 @@ namespace Symbols
 	//---------------------------------------------------------------------------------
 	// Purpose: pvs Symbols
 	//---------------------------------------------------------------------------------
-	using CGMOD_Player_SetupVisibility = int (GMCOMMON_CALLING_CONVENTION*)(void* ent, unsigned char* pvs, int pvssize);
+	using CGMOD_Player_SetupVisibility = int (GMCOMMON_CALLING_CONVENTION*)(void* ply, void* viewEntity, unsigned char* pvs, int pvssize);
 	extern const std::vector<Symbol> CGMOD_Player_SetupVisibilitySym;
 
 	using CServerGameEnts_CheckTransmit = void (GMCOMMON_CALLING_CONVENTION*)(void* gameents, CCheckTransmitInfo*, const unsigned short*, int);
@@ -614,6 +617,9 @@ namespace Symbols
 
 	using IVP_Mindist_Manager_recheck_ov_element = void (GMCOMMON_CALLING_CONVENTION*)(void* mindistManager, void* physObj); // Crash fix.
 	extern const std::vector<Symbol> IVP_Mindist_Manager_recheck_ov_elementSym;
+
+	using IVP_Mindist_Minimize_Solver_p_minimize_PK = GMODSDK::IVP_MRC_TYPE (GMCOMMON_CALLING_CONVENTION*)(void* _this, const GMODSDK::IVP_Compact_Edge* P, const GMODSDK::IVP_Compact_Edge* K, IVP_Cache_Ledge_Point* m_cache_P, IVP_Cache_Ledge_Point* m_cache_K); // Crash fix.
+	extern const std::vector<Symbol> IVP_Mindist_Minimize_Solver_p_minimize_PKSym;
 
 	// Stuff for our do_impact replacement
 #endif
@@ -906,4 +912,10 @@ namespace Symbols
 	//---------------------------------------------------------------------------------
 	using CNetChan_SendNetMsg = bool (GMCOMMON_CALLING_CONVENTION*)(void* _this, INetMessage &msg, bool bForceReliable, bool bVoice);
 	extern const std::vector<Symbol> CNetChan_SendNetMsgSym;
+
+	//---------------------------------------------------------------------------------
+	// Purpose: unholylib Symbols
+	//---------------------------------------------------------------------------------
+	using Lua_Kill = void (*)();
+	extern const std::vector<Symbol> Lua_KillSym;
 }

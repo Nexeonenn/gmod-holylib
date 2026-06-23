@@ -8,7 +8,6 @@
 #include "sourcesdk/baseclient.h"
 #include "steam/isteamclient.h"
 #include <isteamutils.h>
-#include "unordered_set"
 #include "server.h"
 #include "ivoiceserver.h"
 #include <memory>
@@ -677,7 +676,7 @@ struct VoiceStream {
 	void Save(FileHandle_t fh)
 	{
 		// Create a copy so that the main thread can still party on it.
-		std::unordered_map<int, VoiceData*> voiceDataEntries = pVoiceData;
+		unordered_map<int, VoiceData*> voiceDataEntries = pVoiceData;
 
 		g_pFullFileSystem->Write(&VOICESTREAM_VERSION, sizeof(int), fh);
 
@@ -1172,7 +1171,7 @@ struct VoiceStream {
 		return (int)pVoiceData.size();
 	}
 
-	inline std::unordered_map<int, VoiceData*>& GetData()
+	inline unordered_map<int, VoiceData*>& GetData()
 	{
 		return pVoiceData;
 	}
@@ -1206,7 +1205,7 @@ struct VoiceStream {
 private:
 	// key = tickcount
 	// value = VoiceData
-	std::unordered_map<int, VoiceData*> pVoiceData;
+	unordered_map<int, VoiceData*> pVoiceData;
 	// Current tick, idea is that inside a Think hook you can call VoiceStream:GetNextTick()
 	// We don't clamp it since people might for example set it to -100 and then call GetNextTick to delay the start for example.
 	int nCurrentTick = 0;
@@ -1794,8 +1793,8 @@ struct VoiceStreamTask {
 class LuaVoiceModuleData : public Lua::ModuleData
 {
 public:
-	std::unordered_set<VoiceStreamTask*> pVoiceStreamTasks;
-	std::unordered_set<VoiceEffects::VoiceEffectJob*> pVoiceEffectTasks;
+	unordered_set<VoiceStreamTask*> pVoiceStreamTasks;
+	unordered_set<VoiceEffects::VoiceEffectJob*> pVoiceEffectTasks;
 };
 
 LUA_GetModuleData(LuaVoiceModuleData, g_pVoiceChatModule, VoiceChat)

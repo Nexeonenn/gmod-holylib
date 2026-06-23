@@ -3,8 +3,6 @@
 #include "lua.h"
 #include "detours.h"
 
-#include <unordered_set>
-
 #include "tier0/memdbgon.h"
 
 class CAutoRefreshModule : public IModule
@@ -138,7 +136,7 @@ static void hook_Bootil_File_ChangeMonitor_CheckForChanges(Bootil::File::ChangeM
 	}
 }
 
-static std::unordered_set<Bootil::BString> pBlacklistedFiles = {};
+static unordered_set<Bootil::BString> pBlacklistedFiles = {};
 static Detouring::Hook detour_GarrysMod_AutoRefresh_HandleChange_Lua;
 static bool hook_GarrysMod_AutoRefresh_HandleChange_Lua(const std::string* pfileRelPath, const std::string* pfileName, const std::string* pfileExt)
 {

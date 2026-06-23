@@ -5,6 +5,7 @@
 ]]
 PROJECT_GENERATOR_VERSION = 3
 
+EXCLUDE_COMMON_PROJECT = true
 if not HOLYLIB_DEVELOPMENT then
 	newoption({
 		trigger = "gmcommon",
@@ -75,7 +76,14 @@ CreateWorkspace({name = "holylib", abi_compatible = true})
 	-- Can define "manual_files", which allows you to manually add files to the project,
 	-- instead of automatically including them from the "source_path"
 	-- Can also define "abi_compatible", for project specific compatibility
+
+	-- To make gmod-common generate the post build command to put the generated binary into GMod
+	-- This is broken as premake5 does not allow you to use an empty option as "" is treated as no value, but I'm too lazy to fix it properly rn xD
+	_OPTIONS["autoinstall"] = HOLYLIB_DEVELOPMENT and "" or nil
+
 	CreateProject({serverside = true, manual_files = false, source_path = sourcePath:sub(0, -2)})
+		_OPTIONS["autoinstall"] = nil
+
 		kind "SharedLib"
 		symbols "On"
 
@@ -114,6 +122,10 @@ CreateWorkspace({name = "holylib", abi_compatible = true})
 		defines("CPPHTTPLIB_NO_EXCEPTIONS") -- We don't want exceptions!
 		defines("NOBASSOVERLOADS")
 		defines("USE_OLD_BF_READ")
+		defines("ENABLE_LATEST_BASS") -- Since the last GMod update bass was updated!
+		if GMOD_X86_64 then
+			defines("GMOD_X86_64")
+		end
 
 		prebuildcommands(prebuildCommand)
 
@@ -155,18 +167,19 @@ CreateWorkspace({name = "holylib", abi_compatible = true})
 		})
 
 		filter("system:windows")
-			defines("IVP_NO_MATH_INL")
+			defines({"IVP_NO_MATH_INL", "COMPILER_MSVC"})
 			disablewarnings({"4101"})
-			links({"lua51_32.lib"})
-			links({"lua51_64.lib"})
-			links({"opus_32.lib"})
-			links({"opus_64.lib"})
 
-		filter("system:windows", "platforms:x86")
+		filter({"system:windows", "platforms:x86"})
 			libdirs(rootDir .. "libs/win32")
+			links({"lua51_32.lib"})
+			links({"opus_32.lib"})
 
-		filter("system:windows", "platforms:x86_64")
+		filter({"system:windows", "platforms:x86_64"})
 			libdirs(rootDir .. "libs/win64")
+			defines({"COMPILER_MSVC64", "WIN64"})
+			links({"lua51_64.lib"})
+			links({"opus_64.lib"})
 
 		filter({"system:linux", "platforms:x86_64"})
 			libdirs(rootDir .. "libs/linux64")

@@ -3,7 +3,6 @@
 #include "module.h"
 #include "lua.h"
 #include "player.h"
-#include "unordered_set"
 
 // memdbgon must be the last include file in a .cpp file!!!
 #include "tier0/memdbgon.h"
@@ -26,7 +25,7 @@ IModule* pEntListModule = &g_pEntListModule;
 Push_LuaClass(EntityList)
 Get_LuaClass(EntityList, "EntityList")
 
-static std::unordered_set<EntityList*> pEntityLists; // Fk... Now we have multiple threads partying on here. ToDo: Mutex
+static unordered_set<EntityList*> pEntityLists; // Fk... Now we have multiple threads partying on here. ToDo: Mutex
 
 class LuaEntityModuleData : public Lua::ModuleData
 {
@@ -70,6 +69,7 @@ void EntityList::Clear()
 
 void EntityList::CreateReference(CBaseEntity* pEntity, bool bNoPop)
 {
+	Util::Push_Entity(m_pLua, pEntity);
 	auto it = m_pEntReferences.find(pEntity);
 	if (it != m_pEntReferences.end())
 	{
@@ -77,10 +77,12 @@ void EntityList::CreateReference(CBaseEntity* pEntity, bool bNoPop)
 		{
 			Warning(PROJECT_NAME ": entitylist is leaking references! Report this!\n");
 		}
+
+		it->second = udataV(Lua::LuaTop(m_pLua->GetState())-1);
+	} else {
+		m_pEntReferences[pEntity] = udataV(Lua::LuaTop(m_pLua->GetState())-1);
 	}
 
-	Util::Push_Entity(m_pLua, pEntity);
-	m_pEntReferences[pEntity] = udataV(m_pLua->GetState()->top-1);
 	if (!bNoPop)
 		m_pLua->Pop(1);
 }
@@ -189,7 +191,7 @@ LUA_FUNCTION_STATIC(EntityList_AddEntities)
 			continue;
 		}
 
-		pData->AddEntity(pEntity, true);
+		pData->AddEntity(pEntity, false);
 
 		LUA->Pop(1);
 	}
@@ -215,15 +217,31 @@ LUA_FUNCTION_STATIC(EntityList_RemoveEntities)
 	return 0;
 }
 
+/*LUA_JIT_WRAPPED_2(EntityList_AddEntity,
+	LuaUserData*, pUD, Get_EntityList_Data(LUA, 1, true),
+	LuaUserDataValue, pUDEntity, Lua::GetUserDataEntity(LUA, 2)
+)
+{
+	EntityList* pData = (EntityList*)pUD->GetData();
+	if (!pData)
+		return;
+
+	CBaseEntity* pEntity = Util::GetCBaseEntityFromHandle(*(EHANDLE*)pUDEntity);
+	if (pEntity)
+		pData->AddEntity(pEntity, false);
+}*/
+
+// The Above ASM is broken for some reason (ToDo: Check why BUT FIRST get g_pEntityList on 64x!)
 LUA_FUNCTION_STATIC(EntityList_AddEntity)
 {
 	EntityList* pData = Get_EntityList(LUA, 1, true);
 	CBaseEntity* pEntity = Util::Get_Entity(LUA, 2, true);
 
-	pData->AddEntity(pEntity, true);
+	pData->AddEntity(pEntity, false);
 
 	return 0;
 }
+
 
 LUA_FUNCTION_STATIC(EntityList_RemoveEntity)
 {

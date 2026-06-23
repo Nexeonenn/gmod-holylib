@@ -28,20 +28,20 @@ CGlobalEntityList* Util::entitylist = nullptr;
 CUserMessages* Util::pUserMessages = nullptr;
 
 #if HOLYLIB_UTIL_DEBUG_LUAUSERDATA
-std::unordered_set<LuaUserData*> g_pLuaUserData; // Debug only use
+unordered_set<LuaUserData*> g_pLuaUserData; // Debug only use
 #endif
 
-std::unordered_set<int> Util::g_pReference;
+unordered_set<int> Util::g_pReference;
 ConVar Util::holylib_debug_mainutil("holylib_debug_mainutil", "1");
 
 // We require this here since we depend on the Lua namespace
 void ReferencedLuaUserData::ForceGlobalRelease(void* pData)
 {
 	bool bFound = false;
-	const std::unordered_set<Lua::StateData*> pStateData = Lua::GetAllLuaData();
+	const auto& pStateData = Lua::GetAllLuaData();
 	for (Lua::StateData* pState : pStateData)
 	{
-		std::unordered_map<void*, ReferencedLuaUserData*> owningData = pState->GetPushedUserData(); // Copy it over in case it->second gets deleted while iterating
+		const auto& owningData = pState->GetPushedUserData(); // Copy it over in case it->second gets deleted while iterating
 		auto it2 = owningData.find(pData);
 		if (it2 == owningData.end())
 			continue;
@@ -65,7 +65,7 @@ void ReferencedLuaUserData::ForceGlobalRelease(void* pData)
 	*/
 	for (Lua::StateData* pState : pStateData)
 	{
-		std::unordered_map<void*, ReferencedLuaUserData*> owningData = pState->GetPushedUserData(); // Copy it over in case it->second gets deleted while iterating
+		auto& owningData = pState->GetPushedUserData(); // Copy it over in case it->second gets deleted while iterating
 		auto it2 = owningData.find(pData);
 		if (it2 == owningData.end())
 			continue;
@@ -353,7 +353,7 @@ INetChannel* Util::Get_NetChannel(GarrysMod::Lua::ILuaInterface* pLua, int iStac
 	CBaseClient* pClient = nullptr;
 #if MODULE_EXISTS_GAMESERVER
 	pClient = Get_CBaseClient(pLua, iStackPos, bError);
-	if (pClient)
+	if (pClient && pClient->IsConnected())
 	{
 		pChannel = pClient->GetNetChannel();
 	}
@@ -418,12 +418,12 @@ void CBaseEntity::CalcAbsolutePosition(void)
 	}
 }
 
-CBaseEntity* Util::GetCBaseEntityFromEdict(edict_t* edict)
+CBaseEntity* Util::GetCBaseEntityFromEdict(const edict_t* edict)
 {
 	if (!edict)
 		return nullptr;
 
-	return Util::servergameents->EdictToBaseEntity(edict);
+	return Util::servergameents->EdictToBaseEntity((edict_t*)edict);
 }
 
 CBaseEntity* Util::GetCBaseEntityFromIndex(int nEntIndex)
@@ -439,7 +439,12 @@ CBaseEntity* Util::GetCBaseEntityFromHandle(const CBaseHandle& pHandle)
 	if (g_pEntityList)
 		return (CBaseEntity*)pHandle.Get();
 
-	return Util::GetCBaseEntityFromIndex(pHandle.GetEntryIndex());
+	// BUG! We cannot add server-only entities without g_pEntityList!
+	CBaseEntity* pEntity = Util::GetCBaseEntityFromIndex(pHandle.GetEntryIndex());
+	if (pEntity->GetRefEHandle() != pHandle) // Serial number may not match! A Handle can contain an outdated entity!
+		return nullptr;
+
+	return pEntity;
 }
 
 CBaseEntity* Util::FirstEnt()
@@ -577,7 +582,7 @@ static void hook_SteamGameServer_Shutdown()
 	detour_SteamGameServer_Shutdown.GetTrampoline<Symbols::SteamGameServer_Shutdown>()();
 }
 
-std::unordered_set<std::string> Util::pBlockedEvents;
+unordered_set<std::string> Util::pBlockedEvents;
 static Detouring::Hook detour_CGameEventManager_CreateEvent;
 static IGameEvent* hook_CGameEventManager_CreateEvent(void* manager, const char* name, bool bForce)
 {
@@ -614,10 +619,10 @@ void Util::UnblockGameEvent(const char* pName)
 	Because they are the most reliable and secure way to get offsets to variables even across platforms.
 	We normally try to avoid offsets, but these offset are our love.
 */
-static std::unordered_map<std::string, std::unordered_set<SendProp*>> g_pSendProps;
-extern void AddSendProp(SendProp* pProp, std::unordered_set<SendProp*>& pSendProp);
+static unordered_map<std::string, unordered_set<SendProp*>> g_pSendProps;
+extern void AddSendProp(SendProp* pProp, unordered_set<SendProp*>& pSendProp);
 extern void AddSendTable(SendTable* pTables);
-void AddSendProp(SendProp* pProp, std::unordered_set<SendProp*>& pSendProp)
+void AddSendProp(SendProp* pProp, unordered_set<SendProp*>& pSendProp)
 {
 	if (pSendProp.find(pProp) == pSendProp.end())
 		pSendProp.insert(pProp);
@@ -631,7 +636,7 @@ void AddSendProp(SendProp* pProp, std::unordered_set<SendProp*>& pSendProp)
 
 void AddSendTable(SendTable* pTable)
 {
-	std::unordered_set<SendProp*> pSendProp;
+	unordered_set<SendProp*> pSendProp;
 	for (int i = 0; i < pTable->GetNumProps(); i++) {
 		SendProp* pProp = &pTable->m_pProps[i]; // Windows screwing with GetProp
 		
@@ -641,16 +646,28 @@ void AddSendTable(SendTable* pTable)
 	g_pSendProps[pTable->GetName()] = pSendProp;
 }
 
+static std::vector<DTVarByOffset*>& GetDTVarRegistry()
+{
+    static std::vector<DTVarByOffset*> pVars;
+    return pVars;
+}
+
+static bool g_bLoadedSendPropTables = false;
+static inline void InitSendPropTables()
+{
+	for(ServerClass *serverclass = Util::servergamedll->GetAllServerClasses(); serverclass->m_pNext != nullptr; serverclass = serverclass->m_pNext)
+		AddSendTable(serverclass->m_pTable);
+
+	g_bLoadedSendPropTables = true;
+
+	for (DTVarByOffset* pVar : GetDTVarRegistry())
+		pVar->Init();
+}
+
 int Util::FindOffsetForNetworkVar(const char* pDTName, const char* pVarName)
 {
 	if (!Util::servergamedll)
 		return -1;
-
-	if (g_pSendProps.size() == 0)
-	{
-		for(ServerClass *serverclass = Util::servergamedll->GetAllServerClasses(); serverclass->m_pNext != nullptr; serverclass = serverclass->m_pNext)
-			AddSendTable(serverclass->m_pTable);
-	}
 
 	auto it = g_pSendProps.find(pDTName);
 	if (it != g_pSendProps.end())
@@ -670,11 +687,28 @@ int Util::FindOffsetForNetworkVar(const char* pDTName, const char* pVarName)
 	return -1;
 }
 
+void Util::AddDTVarToLoad(DTVarByOffset* pVar)
+{
+	if (g_bLoadedSendPropTables)
+		pVar->Init();
+
+	GetDTVarRegistry().push_back(pVar);
+}
+
 struct SysError_SkipInfo
 {
 	std::string msg;
 	uint32_t count;
 };
+
+static char g_pCurrentSysError[2048]{};
+const char* Util::GetCurrentSysError()
+{
+	if (g_pCurrentSysError[0] == '\0')
+		return nullptr;
+
+	return g_pCurrentSysError;
+}
 
 static std::vector<SysError_SkipInfo> g_pErrorsToIgnore;
 void Util::SysError_IgnoreError(std::string msg, uint32_t count)
@@ -685,7 +719,7 @@ void Util::SysError_IgnoreError(std::string msg, uint32_t count)
 }
 
 static Detouring::Hook detour_Sys_Error_Internal;
-void hook_Sys_Error_Internal( bool bMinidump, const char *error, va_list argsList )
+DLL_EXPORT void hook_Sys_Error_Internal_ignore_this_function_in_crashes_check_your_logs_( bool bMinidump, const char *error, va_list argsList )
 {
 	std::string_view strError = error;
 	for (auto it = g_pErrorsToIgnore.begin(); it != g_pErrorsToIgnore.end(); ++it)
@@ -700,7 +734,9 @@ void hook_Sys_Error_Internal( bool bMinidump, const char *error, va_list argsLis
 		}
 	}
 
+	vsnprintf(g_pCurrentSysError, sizeof(g_pCurrentSysError), error, argsList);
 	detour_Sys_Error_Internal.GetTrampoline<Symbols::Sys_Error_Internal>()(bMinidump, error, argsList);
+	memset(g_pCurrentSysError, 0, sizeof(g_pCurrentSysError));
 }
 
 #if SYSTEM_WINDOWS
@@ -787,7 +823,7 @@ void Util::AddDetour()
 	Detour::Create(
 		&detour_Sys_Error_Internal, "Sys_Error_Internal",
 		engine_loader.GetModule(), Symbols::Sys_Error_InternalSym,
-		(void*)hook_Sys_Error_Internal, 0
+		(void*)hook_Sys_Error_Internal_ignore_this_function_in_crashes_check_your_logs_, 0
 	);
 
 	SourceSDK::ModuleLoader steam_api_loader("steam_api");
@@ -800,6 +836,7 @@ void Util::AddDetour()
 	// Why must getting IServer be an inconsistent hell :sob:
 #if SYSTEM_WINDOWS
 	server = Detour::ResolveSymbolNoDereference<IServer>( engine_loader, Symbol::FromName( "?sv@@3VCGameServer@@A" ) );
+	// Update (ToDo): it broke again for Windows clients- tested on 32x dev
 #else
 	server = InterfacePointers::Server();
 #endif
@@ -906,6 +943,8 @@ void Util::AddDetour()
 	Detour::CheckFunction((void*)func_CBaseEntity_CalcAbsolutePosition, "CBaseEntity::CalcAbsolutePosition");
 
 	pEntityList = g_pModuleManager.FindModuleByName("entitylist");
+
+	InitSendPropTables();
 
 	/*
 	 * IMPORTANT TODO
@@ -1103,7 +1142,7 @@ void Util::Load()
 			return;
 		}
 
-		std::unordered_set<ConVar*> pSkipConVars;
+		unordered_set<ConVar*> pSkipConVars;
 		for (CModule* pWrapper : g_pModuleManager.GetModules())
 		{
 			if (pWrapper->GetConVar())

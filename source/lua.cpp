@@ -52,7 +52,7 @@ LUA_FUNCTION_STATIC(Test_GetEntity)
 	CBaseEntity* pEntity = Util::Get_Entity(LUA, 1, true);
 	EHANDLE* pEntHandle = LUA->GetUserType<EHANDLE>(1, GarrysMod::Lua::Type::Entity);
 	// If something broke, either we will return false, or we will crash which is intended to make the tests fail.
-	LUA->PushBool(pEntity && pEntity->edict() && pEntity->edict()->m_EdictIndex == pEntHandle->GetEntryIndex());
+	LUA->PushBool(pEntity && pEntity->edict() && pEntity->edict()->m_EdictIndex == pEntHandle->GetEntryIndex() && pEntity->GetRefEHandle() == *pEntHandle);
 	return 1;
 }
 
@@ -60,7 +60,7 @@ LUA_FUNCTION_STATIC(Test_GetPlayer) // Same as Test_GetEntity though calling Get
 {
 	CBasePlayer* pEntity = Util::Get_Player(LUA, 1, true);
 	EHANDLE* pEntHandle = LUA->GetUserType<EHANDLE>(1, GarrysMod::Lua::Type::Entity);
-	LUA->PushBool(pEntity && pEntity->edict() && pEntity->edict()->m_EdictIndex == pEntHandle->GetEntryIndex());
+	LUA->PushBool(pEntity && pEntity->edict() && pEntity->edict()->m_EdictIndex == pEntHandle->GetEntryIndex() && pEntity->GetRefEHandle() == *pEntHandle);
 	return 1;
 }
 
@@ -173,6 +173,12 @@ LUA_FUNCTION_STATIC(Test_RawGetGModVector)
 	return 0;
 }
 
+LUA_FUNCTION_STATIC(Test_IsHolyLibState)
+{
+	LUA->PushBool(Lua::IsHolyLibState(LUA));
+	return 1;
+}
+
 LUA_FUNCTION_STATIC(Test_EnableStressBots)
 {
 	if (!g_pCVar)
@@ -215,6 +221,12 @@ LUA_FUNCTION_STATIC(Test_Crash)
 	return 0;
 }
 
+LUA_FUNCTION_STATIC(Test_IsPlayer)
+{
+	LUA->PushBool(Util::Get_Entity(LUA, 1, true)->IsPlayer());
+	return 1;
+}
+
 static void SetupCoreTestFunctions(GarrysMod::Lua::ILuaInterface* pLua)
 {
 	Lua::GetLuaData(pLua)->RegisterMetaTable(Lua::_HOLYLIB_CORE_TEST, pLua->CreateMetaTable("_HOLYLIB_CORE_TEST"));
@@ -248,10 +260,12 @@ static void SetupCoreTestFunctions(GarrysMod::Lua::ILuaInterface* pLua)
 		Util::AddFunc(pLua, Test_RawGetModuleData, "RawGetModuleData");
 		Util::AddFunc(pLua, Test_GetGModVector, "GetGModVector");
 		Util::AddFunc(pLua, Test_RawGetGModVector, "RawGetGModVector");
+		Util::AddFunc(pLua, Test_IsHolyLibState, "IsHolyLibState");
 		
 		Util::AddFunc(pLua, Test_EnableStressBots, "EnableStressBots"); // Required until we get https://github.com/Facepunch/garrysmod-requests/issues/2948
 		Util::AddFunc(pLua, Test_DisableStressBots, "DisableStressBots");
 		Util::AddFunc(pLua, Test_Crash, "Crash");
+		Util::AddFunc(pLua, Test_IsPlayer, "IsPlayer");
 	Util::FinishTable(pLua, "_HOLYLIB_CORE");
 }
 
@@ -517,10 +531,10 @@ void Lua::DestroyInterface(GarrysMod::Lua::ILuaInterface* LUA)
 	Lua::CloseLuaInterface(LUA);
 }
 
-LuaUserData* Lua::GetHolyLibUserData(GarrysMod::Lua::ILuaInterface * LUA, int nStackPos)
+LuaUserData* Lua::GetHolyLibUserData(GarrysMod::Lua::ILuaInterface* LUA, int nStackPos)
 {
 	lua_State* L = LUA->GetState();
-	TValue* val = RawLua::index2adr(L, nStackPos);
+	TValue* val = Lua::index2adr(L, nStackPos);
 	if (!val)
 		return nullptr;
 
@@ -538,11 +552,9 @@ LuaUserData* Lua::GetHolyLibUserData(GarrysMod::Lua::ILuaInterface * LUA, int nS
 		return nullptr;
 	}
 
-	GCudata* luaData = udataV(val); // Very "safe" I know :3
-	if (luaData->udtype >= GarrysMod::Lua::Type::UserData)
-	{
-		return static_cast<LuaUserData*>(static_cast<void*>(luaData));
-	}
+	LuaUserData* luaData = (LuaUserData*)udataV(val); // Very "safe" I know :3
+	if (luaData->GetType() >= GarrysMod::Lua::Type::UserData)
+		return luaData;
 
 	return nullptr;
 }
@@ -564,13 +576,14 @@ bool Lua::CheckHolyLibType(GarrysMod::Lua::ILuaInterface* LUA, int nStackPos, in
 bool Lua::CheckGModType(GarrysMod::Lua::ILuaInterface* LUA, int nStackPos, int nType, void** pUserData)
 {
 	lua_State* L = LUA->GetState();
-	TValue* val = RawLua::index2adr(L, nStackPos);
+	TValue* val = Lua::index2adr(L, nStackPos);
 
 	if (val)
 	{
 		if (tvisudata(val))
 		{
-			GarrysMod::Lua::ILuaBase::UserData* pData = (GarrysMod::Lua::ILuaBase::UserData*)uddata(udataV(val));
+			LuaUserData* ud = (LuaUserData*)udataV(val);
+			GarrysMod::Lua::ILuaBase::UserData* pData = (GarrysMod::Lua::ILuaBase::UserData*)ud->GetGModData(LUA);
 			if (pData && pData->type == nType)
 			{
 				*pUserData = pData->data;
@@ -632,16 +645,15 @@ const char* Lua::TValueToString(TValue* pVal)
 		GCtab* pTab = tabV(pVal);
 		snprintf(pBuffer, sizeof(pBuffer), "(table) N/A");
 	} else if (tvisudata(pVal)) {
-		GCudata* pUD = udataV(pVal);
+		LuaUserData* pUD = (LuaUserData*)udataV(pVal);
 
 		int nType = 0;
 		void* pData = nullptr;
-		if (pUD->udtype >= GarrysMod::Lua::Type::UserData) { // HolyLib userdata differs!
-			LuaUserData* pLuaData = (LuaUserData*)pUD;
-			pData = pLuaData->GetData();
-			nType = pLuaData->GetType();
+		if (pUD->GetType() >= GarrysMod::Lua::Type::UserData) { // HolyLib userdata differs!
+			pData = pUD->GetData();
+			nType = pUD->GetType();
 		} else {
-			pData = uddata(pUD);
+			pData = pUD->GetGModData(g_Lua);
 			if (pData)
 			{
 				GarrysMod::Lua::ILuaBase::UserData* pLuaData = (GarrysMod::Lua::ILuaBase::UserData*)pData;
@@ -660,30 +672,23 @@ const char* Lua::TValueToString(TValue* pVal)
 	return pBuffer;
 }
 
-// NOTE: This Only works on stack values that are on the top!!!
-static inline TValue* FastIndex2Addr(lua_State* L, int nStackPos)
-{
-	TValue *o = L->base + (nStackPos - 1);
-	return o < L->top ? o : niltv(L);
-}
-
 // Should only be called by Default__index!
 bool Lua::FindOnObjectsMetaTable(lua_State* L, int nStackPos, int nKeyPos)
 {
 	if (Util::func_lj_tab_get)
 	{
-		TValue* val = FastIndex2Addr(L, nStackPos);
+		TValue* val = Lua::FastIndex2Addr(L, nStackPos);
 
 		if (val && tvisudata(val))
 		{
-			GCudata* udata = udataV(val);
-			GCtab* meta = tabref(udata->metatable);
+			LuaUserData* udata = (LuaUserData*)udataV(val);
+			GCtab* meta = tabref(udata->GetMetaTable((GarrysMod::Lua::ILuaInterface*)L->luabase));
 			if (meta)
 			{
-				TValue* tabVal = (TValue*)Util::func_lj_tab_get(L, meta, L->top-1);
+				TValue* tabVal = (TValue*)Util::func_lj_tab_get(L, meta, Lua::LuaTop(L)-1);
 				if (!tvisnil(tabVal))
 				{
-					copyTV(L, L->top++, tabVal);
+					copyTV(L, Lua::LuaIncrTop(L), tabVal);
 					return true;
 				}
 			}
@@ -733,7 +738,7 @@ public:
 	int GetUserDataType(int iStackPos)
 	{
 		lua_State* L = This()->GetState();
-		TValue* val = RawLua::index2adr(L, iStackPos);
+		TValue* val = Lua::index2adr(L, iStackPos);
 		if (!val)
 			return -1;
 
@@ -757,13 +762,13 @@ public:
 			return -1;
 		}
 
-		GCudata* luaData = udataV(val); // Very "safe" I know :3
-		if (luaData->udtype >= GarrysMod::Lua::Type::UserData)
+		LuaUserData* luaData = (LuaUserData*)udataV(val); // Very "safe" I know :3
+		if (luaData->GetType() >= GarrysMod::Lua::Type::UserData)
 		{
-			return luaData->udtype;
+			return luaData->GetType();
 		}
-		
-		GarrysMod::Lua::ILuaBase::UserData* uData = (GarrysMod::Lua::ILuaBase::UserData*)uddata(luaData);
+
+		GarrysMod::Lua::ILuaBase::UserData* uData = (GarrysMod::Lua::ILuaBase::UserData*)luaData->GetGModData(This());
 		if (!uData)
 			return -1;
 
@@ -773,7 +778,7 @@ public:
 	virtual void* GetUserdata(int iStackPos)
 	{
 		lua_State* L = This()->GetState();
-		TValue* val = RawLua::index2adr(L, iStackPos);
+		TValue* val = Lua::index2adr(L, iStackPos);
 		if (!val)
 			return nullptr;
 
@@ -792,12 +797,12 @@ public:
 		}
 
 		LuaUserData* luaData = (LuaUserData*)udataV(val); // Very "safe" I know :3
-		if (luaData->udtype >= GarrysMod::Lua::Type::UserData)
+		if (luaData->GetType() >= GarrysMod::Lua::Type::UserData)
 		{
 			return nullptr; // We do NOT support this as we do NOT match the ILuaBase::UserData! (Adding that one byte would fk up alignment)
 		}
 		
-		void* uData = uddata(luaData);
+		void* uData = luaData->GetGModData(This());
 		if (!uData)
 			return nullptr;
 
@@ -807,7 +812,7 @@ public:
 	virtual void SetUserType(int iStackPos, void* data)
 	{
 		lua_State* L = This()->GetState();
-		TValue* val = RawLua::index2adr(L, iStackPos);
+		TValue* val = Lua::index2adr(L, iStackPos);
 		if (!val)
 			return;
 
@@ -832,13 +837,13 @@ public:
 		}
 
 		LuaUserData* luaData = (LuaUserData*)udataV(val); // Very "safe" I know :3
-		if (luaData->udtype >= GarrysMod::Lua::Type::UserData)
+		if (luaData->GetType() >= GarrysMod::Lua::Type::UserData)
 		{
 			luaData->SetData(data); // Yes, we support this just for sake of my future stupidity when I try to use this on our stuff.
 			return;
 		}
 		
-		GarrysMod::Lua::ILuaBase::UserData* uData = (GarrysMod::Lua::ILuaBase::UserData*)uddata(luaData);
+		GarrysMod::Lua::ILuaBase::UserData* uData = (GarrysMod::Lua::ILuaBase::UserData*)luaData->GetGModData(This());
 		if (!uData)
 			return;
 
@@ -879,7 +884,7 @@ public:
 	}
 };
 
-static std::unordered_set<Lua::StateData*> g_pLuaStates;
+static unordered_set<Lua::StateData*> g_pLuaStates;
 void Lua::CreateLuaData(GarrysMod::Lua::ILuaInterface* LUA, bool bNullOut)
 {
 	Lua::CriticalThreadAccess pThreadScope;
@@ -929,7 +934,7 @@ void Lua::RemoveLuaData(GarrysMod::Lua::ILuaInterface* LUA)
 	Msg("holylib - Removed thread data %p\n", data);
 }
 
-const std::unordered_set<Lua::StateData*>& Lua::GetAllLuaData()
+const unordered_set<Lua::StateData*>& Lua::GetAllLuaData()
 {
 	return g_pLuaStates;
 }
@@ -1017,4 +1022,20 @@ void Lua::ThinkMainInterface()
 
 	// Lock once they are done
 	pData->pThreadingMutex.lockWhenDone();
+}
+
+int Lua::TraceRecord_UserData_GetEnv(lua_TraceRecorder* rec)
+{
+	lua_TraceEntry ud = lj_tr_getbase(rec, 0);
+	if (lj_tr_type(ud) != TR_TYPE_USERDATA)
+		return -1; // Not userdata!
+
+
+	GCtab* env = tabref(udataV((TValue*)lj_tr_getrtbase(rec, 0))->env);
+	lua_TraceEntry nullTab = lj_tr_knull(rec, TR_TYPE_TABLE);
+	lua_TraceEntry envLoad = LJTR_EMIT(rec, TR_FLOAD, TR_TYPE_TABLE, ud, TR_FIELD_UDATA_ENV);
+	LJTR_GEMIT(rec, (env ? TR_NE : TR_EQ), TR_TYPE_TABLE, envLoad, nullTab);
+
+	lj_tr_setbase(rec, 0, env ? envLoad : lj_tr_refnil(rec));
+	return 1;
 }

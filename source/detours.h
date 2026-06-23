@@ -10,8 +10,7 @@
 #include "Platform.hpp"
 #include "tier0/dbg.h"
 #include <vector>
-#include <unordered_set>
-#include <unordered_map>
+#include "unordered_stuff.h"
 
 #ifdef DLL_TOOLS
 #ifdef WIN32
@@ -196,9 +195,9 @@ byte m_##name = 0;
 	extern void EnableHook(Detouring::Hook* pHook);
 	extern void DisableHook(Detouring::Hook* pHook);
 	extern void ReportLeak();
-	extern const std::unordered_set<std::string>& GetDisabledDetours();
-	extern const std::unordered_set<std::string>& GetFailedDetours();
-	extern const std::unordered_map<std::string, unsigned int>& GetLoadedDetours();
+	extern const unordered_set<std::string>& GetDisabledDetours();
+	extern const unordered_set<std::string>& GetFailedDetours();
+	extern const unordered_map<std::string, unsigned int>& GetLoadedDetours();
 
 	extern SymbolFinder symfinder;
 	template<class T>
@@ -248,7 +247,11 @@ byte m_##name = 0;
 #ifndef NOT_DEDICATED
 #define DETOUR_SYMBOL_ID 5
 #else
+#if defined(GMOD_X86_64)
 #define DETOUR_SYMBOL_ID 3
+#else
+#define DETOUR_SYMBOL_ID 6
+#endif
 #endif
 #define MODULE_EXTENSION "win64"
 #endif
@@ -257,8 +260,18 @@ byte m_##name = 0;
 	inline const Symbol* GetSymbolForID(const std::vector<Symbol>& pSymbols)
 	{
 	#if DETOUR_SYMBOL_ID != 4 && DETOUR_SYMBOL_ID != 5
+	#if DETOUR_SYMBOL_ID != 6
 		if (pSymbols.size() <= DETOUR_SYMBOL_ID)
 			return nullptr;
+	#else
+		if (pSymbols.size() <= DETOUR_SYMBOL_ID)
+		{
+			if (pSymbols.size() <= 3)
+				return nullptr;
+
+			return &pSymbols[3]; // 3 = GMOD 64x
+		}
+	#endif
 	#else
 		if (pSymbols.size() <= DETOUR_SYMBOL_ID)
 		{

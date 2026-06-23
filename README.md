@@ -60,7 +60,7 @@ All of those can be found under the `Actions` tab -> https://github.com/RaphaelI
 > These builds focus on the GMod `dev` branch currently.<br>
 > If you attempt to use a build on a server running on the `public` branch you **may** experience issues or even crashes.<br>
 
-## How to update (Newer GhostInj)
+## How to update
 
 > [!NOTE]
 > Don't try to use plugin_unload since it might not work because of things like the networking module which currently can't be unloaded.<br>
@@ -71,12 +71,6 @@ All of those can be found under the `Actions` tab -> https://github.com/RaphaelI
 3. Restart the server normally.<br>
 On the next startup, the ghostinj will update holylib to use the new file.<br>
 This is done by first deleting the current `gmsv_holylib_linux[64].so` and then renaming the `_updated.so` essentially replacing the original file.<br>
-
-## How to update (Older GhostInj versions)
-
-1. Shutdown the server
-2. Upload the new file
-3. Enjoy it
 
 ## What noticeable things does HolyLib bring?
 \- A huge Lua API providing deep access to the engine.<br>
@@ -102,10 +96,82 @@ This is done by first deleting the current `gmsv_holylib_linux[64].so` and then 
 > On Linux unsafe code is allowed by default, on windows it is blocked as were on a client and do not want to risk anything.<br>
 > You can disable unsafe code on linux using `-holylib_denyunsafe`<br>
 
+## Reporting issues / asking Questions
+If you have encountered a bug or crash, please open an issue, if you only have a question or are unsure if something is a bug, then open a discussion.<br>
+There is also a discord(https://discord.gg/Cz3ZQvjcQs) since people seem to prefer it a lot more than GitHub for asking questions xD<br>
+Any announcement or poll will still be posted on GitHub but also mentioned in Discord- I still prefer GitHub since it's open for anyone.<br>
+
+## Clarification about HolyLib & its maintenance
+HolyLib has been a hobby project since the very beginning.<br>
+I've made it as a fun project to expose engine functions, optimize the engine, and other things just for mainly my own curiosity or because someone asked for it.<br>
+When I started it, I had lots of free time as I had no active work, though not too long after that I did get a job and since then have had far less time to spend on it, which is how it currently reached this slow pace.<br>
+I've maintained and worked on it for fun, but I do not promise constant/permanent maintenance, as there is really no incentive to always continue since this project never was aimed to provide me any real benefit and it never gave me any benefit other than satisfying my fun / curiosity while everyone can benefit themselves from HolyLib binaries.<br>
+You can sponsor the project to support its development, though it will never be a requirement to do so for continued maintainance- while it does provide incentive and perhaps in the future allows me to spend more time on it, I won't make HolyLib depend on sponsors and to be clear sponsoring does not provide any additional rights or special benefits.<br>
+
+## HolyLib config
+You can find HolyLib's config files under `garrysmod/holylib/cfg/[x86 or x64]/`<br>
+
+### modules.json
+In this file, you find all modules and their configs. <br>
+`enabledByDefault` - Do not modify this one, this is used by HolyLib to keep track of if a module was enabled/disabled with a HolyLib update. <br>
+`enabled` - With this you can freely control if a module is enabled or disabled. <br>
+`debugLevel` - Controls which debug level the module will start in. <br>
+There may be further options which will control other module specific functions.<br>
+
 ## Next Update
-\- [#] Fixed in our LuaJIT version failing to trace C functions with `0` arguments.<br>
-\- [#] Fixed in our LuaJIT version `table.insert` trying to shift values when inserting into negatives causing performance issues<br>
-\- [#] In our LuaJIT allow `debug.setfenv` to set the `env` of a userdata to `nil` & initialize userdata's env as `nil`<br>
+\- [+] Support `dev` branch x64 on Windows<br>
+\- [+] Added new functions & hooks to `gameserver` module<br>
+\- \-> `CBaseClient:FillServerInfo`, `:MoveIntoClient`, `:AddToQueueList`, `:RemoveFromAllLists`<br>
+\- \-> `gameserver.GetFreeQueueClient`<br>
+\- \-> `HolyLib:GetFreeClient`<br>
+\- [+] Added new function to `unholylib` module -> `KillLua`<br>
+\- [#] Multiple changes to our LuaJIT version<br>
+\- \-> Fixed failing to trace C functions with `0` arguments.<br>
+\- \-> Fixed `table.insert` trying to shift values when inserting into negatives, causing performance issues<br>
+\- \-> Allow `debug.setfenv` to set the `env` of a userdata to `nil` & initialize userdata's env as `nil`<br>
+\- \-> Made `newproxy` JITd & added new `IR_UDNEW` opcode<br>
+\- \-> Finished external trace recorder and moved traced functions from LuaJIT into HolyLib.<br>
+\- \-> Reduced `GCudata`, `GCtrace`, `GCproto`, `global_State` sizes saving memory.<br>
+\- \-> Implement `LUAJIT_ENABLE_CHECKHOOK` as a runtime toggle (See: https://github.com/RaphaelIT7/gmod-holylib/issues/151)<br>
+\- \-> Fixed coroutines crashing due to HolYLib not recognizing the lua state correctly (See: https://github.com/RaphaelIT7/gmod-holylib/issues/177)<br>
+\- [#] Fixed `gameserver` module causing a crash when `MoveCGameClientIntoCGameClient` is hit due to `CNetChan` class being outdated (See: https://github.com/RaphaelIT7/gmod-holylib/issues/160 & https://github.com/RaphaelIT7/gmod-holylib/issues/173)<br>
+\- [#] Fixed `gameserver` module crashing due to a missing null check (See: https://github.com/RaphaelIT7/gmod-holylib/issues/171)<br>
+\- [#] Avoid direct `CBaseClient::m_NetChannel` to avoid future crashes from layouts changing.<br>
+\- [#] Multiple crash fixes in `networking` module<br>
+\- \-> Fixed `CollisionProp()` access crashing in two places.<br>
+\- \-> Fixed outdated `IMDLCache` interfaces causing `MDLCACHE_CRITICAL_SECTION` to crash (See: https://github.com/RaphaelIT7/gmod-holylib/issues/172)<br>
+\- \-> Re-implemented 0.8-pre CheckTransmit version since it is way better in performance (it was removed before the release due to having been assumed to be broken)<br>
+\- \-> Fixed `areasplit` causing a crash.<br>
+\- \-> Made viewentity lookup save across GMod Updates (See: https://github.com/RaphaelIT7/gmod-holylib/issues/172)<br>
+\- \-> Fixed `hook_CServerGameEnts_CheckTransmit` never falling back to engine. (See: a0454c8d87d4bcfb609a47f2306d6c26648e9146)<br>
+\- [#] Fixed broken error handling in our own Lua states.<br>
+\- [#] Fixed `gmoddatapack` module (See: https://github.com/RaphaelIT7/gmod-holylib/pull/165)<br>
+\- \-> Compare processed Lua content instead of raw file contents<br>
+\- \-> Fixed cache invalidation when changing the removeserverif or removecomments settings<br>
+\- [#] Fixed `autorefresh` module (See: https://github.com/RaphaelIT7/gmod-holylib/pull/164)<br>
+\- \-> Fixed manually watched autorefresh files being incorrectly detected as changed on every check<br>
+\- \-> Fixed autorefresh timestamp tracking failing to update stored file entries<br>
+\- \-> Updated autorefresh include to use `unordered_set` for blacklist storage<br>
+\- \-> Fixed symbol for `Bootil::File::ChangeMonitor::CheckForChanges`<br>
+\- [#] Fixed `CPhysCollide` metatable being overwritten by `CPhysConvex` (See: https://github.com/RaphaelIT7/gmod-holylib/issues/170)<br>
+\- [#] Fixed IsValid function crashing due to missing a null check (See: https://github.com/RaphaelIT7/gmod-holylib/issues/170)<br>
+\- [#] Fixed `vprof` for Windows (See: https://github.com/RaphaelIT7/gmod-holylib/pull/168)<br>
+\- [#] Multiple `crashhandler` changes<br>
+\- \-> Allow the handler to handle itself crashing when attempting Lua callbacks<br>
+\- \-> Log engine errors in crash logs.<br>
+\- \-> Include the GMod branch & version in the crash log.<br>
+\- \-> Read `.symtab` to lookup function names to make backtraces more useful (fixes all the `??` results)<br>
+\- \-> Added an unmangler for function names to make backtraces more readable.<br>
+\- [#] Optimized `vprof` to now be blazingly fast and support more than a million scopes without impact (See: https://github.com/RaphaelIT7/gmod-holylib/issues/54)<br>
+\- [#] Fixed broken hook causing all `pvs` functions that were supposed to work inside `SetupPlayerVisibility` to not be functional. (See: https://github.com/RaphaelIT7/gmod-holylib/issues/169)<br>
+\- [#] Fixed an outdated SDK causing x86-64x builds to deadlock / corrupt a mutex.<br>
+\- [#] Slightly Optimized `DTVarByOffset` to avoid branches & improve initializing of them<br>
+\- [#] Fully switched HolyLib over from using `std::unordered_` to using `ankerl::unordered_dense::` for better performance.<br>
+\- [#] Removed almost all dependencies on a specific JIT version.<br>
+\- \-> Previously, HolyLib depended on a specific layout between all three JIT versions it must support.<br>
+\- [#] Fixed an issue with `holylua` with how we locked on shutdown.<br>
+\- [#] Fixed `httpserver` module possibly deadlocking on shutdown & fixed other threading issues (See: https://github.com/RaphaelIT7/gmod-holylib/issues/174)<br>
+
 
 You can see all changes/commits here:<br>
 https://github.com/RaphaelIT7/gmod-holylib/compare/Release0.8...main
@@ -114,7 +180,7 @@ https://github.com/RaphaelIT7/gmod-holylib/compare/Release0.8...main
 None
 
 ### QoL updates
-None
+\- [#] Unified module dumping code & fixed names being too long by 1.<br>
 
 ## ToDo
 
@@ -4208,9 +4274,15 @@ Creates a fake client or returns NULL on failure<br>
 
 #### CGameClient gameserver.CreateNewClient()
 Creates a new client or returns NULL on failure<br>
+Use this only if you know what you're doing, as if you lose track of the client, you'll leak memory!<br>
+A client once created is never meant to be deleted.<br>
+Use `CBaseClient:AddToQueueList` or `CBaseClient:AddToServerList` to register the client into the proper list unless you're manually controlling them!<br>
 
-#### CGameClient gameserver.GetFreeClient(string address, bool useDNS = false)
+#### CGameClient gameserver.GetFreeClient(string address, bool useDNS = false, bool noQueueClients = false)
 Searches if there is a `CGameClient` with the given address already and returns their object OR attempts to create a new client.<br>
+
+#### CGameClient gameserver.GetFreeQueueClient(string address, bool useDNS = false)
+Searches if there is a queue `CGameClient` with the given address already and returns their object OR attempts to create a new queue client.<br>
 
 #### number gameserver.GetSocket()
 Returns the server's socket
@@ -4347,6 +4419,16 @@ Prints the given message into the client's console.<br>
 #### bool CBaseClient:IsValid()
 Returns `true` if the client is still valid.<br>
 
+> [!IMPORTANT]
+> This function obeys `holylib_gameserver_rawclients` so a empty slot is treated as Invalid!<br>
+
+#### bool CBaseClient:IsInvalid()
+Returns `true` if the client is truly invalid.<br>
+It can return `false` meaning the pointer internally is just an empty client, while `CBaseClient:IsValid` returns `false`.<br>
+
+> [!IMPORTANT]
+> This function does **NOT** obey `holylib_gameserver_rawclients` and exists for code to know if the object internally has a valid `CBaseClient` but is empty.<br>
+
 #### bool (Experimental) CBaseClient:SendLua(string code)
 Sends the given code to the client to be executed.<br>
 Returns `true` on success.<br>
@@ -4389,6 +4471,8 @@ Disconnects the client.<br>
 #### number, number CBaseClient:GetRemoteFramerate()
 
 #### CBaseClient:SetUpdateRate(number rate)
+Normally, the update rate is controlled by the client's `cl_updaterate` and this controlls how many snapshots per second are sent to clients.<br>
+Snapshots are quite expensive- so you could force it to a lower value, which can help performance noticeably.<br>
 
 #### number CBaseClient:GetUpdateRate()
 
@@ -4453,6 +4537,11 @@ Returns `true` on success.<br>
 
 #### CBaseClient:SendServerInfo()
 
+#### CBaseClient:FillServerInfo(int clientIndex = -1)
+Fills and sends the server info.<br>
+This function allows you to specify the client index that is sent out or it falls back to the normal one.<br>
+This function intentionally does not clamp the clientIndex when unsafe code is enabled because who knows what you may try- you got all the freedom.<br>
+
 #### CBaseClient:SendSignonData()
 
 #### CBaseClient:SpawnPlayer()
@@ -4480,6 +4569,21 @@ Returns `true` on success.<br>
 #### bool CBaseClient:HasNetChannel()
 Returns `true` if the client has a net channel.<br>
 This is useful for example, when working with fake clients and using `sv_stressbots`<br>
+
+#### CBaseClient:MoveIntoClient(CBaseClient targetClient)
+Moves the client it's called on into the target client.<br>
+This function calls HolyLib's internal `MoveCGameClientIntoCGameClient` which will move all values, patch the net channel, and reconnect the client.<br>
+
+#### CBaseClient:AddToQueueList()
+Adds the client to the queue list, allowing the queue system to use the slot!<br>
+
+#### CBaseClient:AddToServerList()
+Adds the client to the server list, treating it like a usable game client!<br>
+
+#### CBaseClient:RemoveFromAllLists()
+Removes the client from both server and queue list, meaning nothing will use the client!<br>
+Use this only if you know what you're doing, as if you lose track of the client, you'll leak memory!<br>
+A client once created is never meant to be deleted.<br>
 
 ---
 
@@ -4617,6 +4721,9 @@ Returns the a formatted string.<br>
 Format: `CGameClient [%i][%s]`<br>
 `%i` -> UserID<br>
 `%s` -> ClientName<br>
+
+> [!IMPORTANT]
+> If it returns `CGameClient [EMPTY]` it means the object has no client connected and is basically **invalid** depending on `holylib_gameserver_rawclients` at the current time!<br>
 
 ### CNetChan
 This class represents a client.
@@ -4997,6 +5104,10 @@ If `0` or a number below `0` is returned, the client will be kicked normally for
 Called when a client attempts to execute a console command.<br>
 Return `true` to block/cancel execution.<br>
 
+#### CBaseClient HolyLib:GetFreeClient(string address)
+Called when the engine is searching for a free client slot.<br>
+You can return your own `CBaseClient` or return `nil` to let the engine handle selection.<br>
+
 ### ConVars
 
 #### holylib_gameserver_disablespawnsafety (default `0`)
@@ -5012,6 +5123,10 @@ If enabled, `CGameClient` that are empty / have no active player are still consi
 
 > [!NOTE]
 > Internally it checks using `CBaseClient:IsConnected()` to see if a client is empty or not!
+
+> [!WARNING]
+> I highly discurrage enabling this as it removes any IsValid checks possibly exposing garbage or resulting in crashes when calling any functions on Empty slots!<br>
+> If you want to use a function on a Empty but not Invalid client please open a issue and request that the function supports that.<br>
 
 #### holylib_gameserver_maxplayers (default `128`)
 The amount of max players a server can have.<br>
@@ -5499,6 +5614,9 @@ Attempts to set CurTime to the given value
 Sets the EntIndex of the given entity, internally it will attempt to move the entity into the given edict slot.<br>
 If the edict slot is already used, it will **swap** the entities.<br>
 If the new index is `-1` then it will make the entity a server-only entity.<br>
+
+#### unholylib.KillLua()
+Kills Lua. Good Luck >:3<br>
 
 # Unfinished Modules
 

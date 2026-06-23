@@ -57,7 +57,7 @@ static void hook_CSteam3Server_OnLogonSuccess(CSteam3Server* srv, SteamServersCo
 }
 
 static std::vector<CBaseClient*> g_pApprovedClients;
-static std::unordered_set<uint64> g_pApprovedSteamIDs;
+static unordered_set<uint64> g_pApprovedSteamIDs;
 static Detouring::Hook detour_CSteam3Server_NotifyClientConnect;
 static Symbols::CSteam3Server_SendUpdatedServerDetails func_CSteam3Server_SendUpdatedServerDetails;
 static bool hook_CSteam3Server_NotifyClientConnect(CSteam3Server* srv, CBaseClient* client, uint32 unUserID, netadr_t& adr, const void *pvCookie, uint32 ucbCookie)
@@ -81,7 +81,9 @@ static bool hook_CSteam3Server_NotifyClientConnect(CSteam3Server* srv, CBaseClie
 		if (!bRet)
 		{
 			// Try it again so that we get the reason why it failed.
-			status = SteamGameServer()->BeginAuthSession( pvCookie, ucbCookie, steamID );
+			ISteamGameServer* pGameServer = SteamGameServer();
+			if (pGameServer)
+				status = pGameServer->BeginAuthSession( pvCookie, ucbCookie, steamID );
 		}
 		g_Lua->PushNumber(status);
 
@@ -166,21 +168,18 @@ LUA_FUNCTION_STATIC(steamworks_Activate)
 	return 1;
 }
 
+// Fetch SteamGameServer() fresh per call; a cached pointer goes stale across SteamGameServer_Init/Shutdown cycles
 LUA_FUNCTION_STATIC(steamworks_IsSecure)
 {
-	if (!func_Steam3Server)
-		LUA->ThrowError("Failed to load Steam3Server!\n");
-
-	LUA->PushBool(func_Steam3Server().BSecure());
+	ISteamGameServer* pGameServer = SteamGameServer();
+	LUA->PushBool(pGameServer && pGameServer->BSecure());
 	return 1;
 }
 
 LUA_FUNCTION_STATIC(steamworks_IsConnected)
 {
-	if (!func_Steam3Server)
-		LUA->ThrowError("Failed to load Steam3Server!\n");
-
-	LUA->PushBool(func_Steam3Server().BLoggedOn());
+	ISteamGameServer* pGameServer = SteamGameServer();
+	LUA->PushBool(pGameServer && pGameServer->BLoggedOn());
 	return 1;
 }
 
@@ -218,13 +217,11 @@ LUA_FUNCTION_STATIC(steamworks_ForceAuthenticate)
 
 LUA_FUNCTION_STATIC(steamworks_GetGameServerSteamID)
 {
-	if (!func_Steam3Server)
-		LUA->ThrowError("Failed to load Steam3Server!\n");
-
-	if (!func_Steam3Server().SteamGameServer())
+	ISteamGameServer* pGameServer = SteamGameServer();
+	if (!pGameServer)
 		LUA->ThrowError("Failed to get SteamGameServer!");
 
-	std::string steamID64 = std::to_string( func_Steam3Server().SteamGameServer()->GetSteamID().ConvertToUint64() );
+	std::string steamID64 = std::to_string( pGameServer->GetSteamID().ConvertToUint64() );
 	LUA->PushString( steamID64.c_str() );
 	return 1;
 }
@@ -316,7 +313,8 @@ DETOUR_THISCALL_FINISH();
 
 void CSteamWorksModule::InitDetour(bool bPreServer)
 {
-	if ( bPreServer ) { return; }
+	if ( bPreServer )
+		return;
 
 	DETOUR_PREPARE_THISCALL();
 	SourceSDK::ModuleLoader engine_loader("engine");

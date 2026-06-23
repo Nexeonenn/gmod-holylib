@@ -79,6 +79,15 @@ Default__newindex(CBaseClient);
 Default__GetTable(CBaseClient);
 Default__IsValidEXT(CBaseClient, if (!gameserver_rawclients.GetBool() && !pData->IsConnected()) { return false; } );
 
+// While IsValid obeys gameserver_rawclients this function will allow one to know if the pointer is truly invalid
+LUA_FUNCTION_STATIC(CBaseClient_IsInvalid)
+{
+	CBaseClient* pClient = Get_CBaseClient(LUA, 1, false, true);
+
+	LUA->PushBool(!pClient);
+	return 1;
+}
+
 LUA_FUNCTION_STATIC(CBaseClient_GetPlayerSlot)
 {
 	CBaseClient* pClient = Get_CBaseClient(LUA, 1, true);
@@ -505,6 +514,25 @@ LUA_FUNCTION_STATIC(CBaseClient_SendServerInfo)
 	return 0;
 }
 
+extern CGlobalVars* gpGlobals;
+LUA_FUNCTION_STATIC(CBaseClient_FillServerInfo)
+{
+	CBaseClient* pClient = Get_CBaseClient(LUA, 1, true);
+	int clientIndex = (int)LUA->CheckNumberOpt(2, -1);
+	if (clientIndex != -1 && !g_pModuleManager.IsUnsafeCodeEnabled() && !(clientIndex > 0 && clientIndex <= gpGlobals->maxClients))
+		LUA->ArgError(2, "client index is out of range!");
+
+	SVC_ServerInfo info;
+	CBaseServer* pServer = (CBaseServer*)pClient->GetServer();
+	pServer->FillServerInfo(info);
+
+	if (clientIndex != -1)
+		info.m_nPlayerSlot = clientIndex;
+
+	pClient->SendNetMsg(info, true);
+	return 0;
+}
+
 LUA_FUNCTION_STATIC(CBaseClient_SendSignonData)
 {
 	CBaseClient* pClient = Get_CBaseClient(LUA, 1, true);
@@ -592,6 +620,79 @@ LUA_FUNCTION_STATIC(CBaseClient_HasNetChannel)
 
 	LUA->PushBool(pClient->GetNetChannel() != nullptr);
 	return 1;
+}
+
+static void MoveCGameClientIntoCGameClient(CGameClient* origin, CGameClient* target);
+LUA_FUNCTION_STATIC(CBaseClient_MoveIntoClient)
+{
+	Util::DoUnsafeCodeCheck(LUA);
+
+	CBaseClient* pSourceClient = Get_CBaseClient(LUA, 1, true);
+	CBaseClient* pTargetClient = Get_CBaseClient(LUA, 2, true);
+
+	if (pSourceClient->GetServer()->IsHLTV())
+		LUA->ArgError(1, "the source client is a HLTV client!");
+
+	if (pTargetClient->GetServer()->IsHLTV())
+		LUA->ArgError(1, "the target client is a HLTV client!");
+
+	MoveCGameClientIntoCGameClient((CGameClient*)pSourceClient, (CGameClient*)pTargetClient);
+	return 0;
+}
+
+LUA_FUNCTION_STATIC(CBaseClient_AddToQueueList)
+{
+	if (!Util::server || !Util::server->IsActive())
+		return 0;
+
+	CBaseClient* pClient = Get_CBaseClient(LUA, 1, true);
+	if (pClient->GetServer()->IsHLTV())
+		LUA->ArgError(1, "the client is a HLTV client!");
+
+	CBaseServer* pServer = (CBaseServer*)Util::server;
+	pServer->m_Clients.FindAndRemove(pClient);
+	if (std::find(g_pQueueClients.begin(), g_pQueueClients.end(), (CGameClient*)pClient) == g_pQueueClients.end())
+		g_pQueueClients.push_back((CGameClient*)pClient);
+
+	return 0;
+}
+
+LUA_FUNCTION_STATIC(CBaseClient_AddToServerList)
+{
+	if (!Util::server || !Util::server->IsActive())
+		return 0;
+
+	CBaseClient* pClient = Get_CBaseClient(LUA, 1, true);
+	if (pClient->GetServer()->IsHLTV())
+		LUA->ArgError(1, "the client is a HLTV client!");
+
+	CBaseServer* pServer = (CBaseServer*)Util::server;
+	if (pServer->m_Clients.Find(pClient) == -1)
+		pServer->m_Clients.AddToTail(pClient);
+
+	auto it = std::find(g_pQueueClients.begin(), g_pQueueClients.end(), (CGameClient*)pClient);
+	if (it != g_pQueueClients.end())
+		g_pQueueClients.erase(it);
+
+	return 0;
+}
+
+LUA_FUNCTION_STATIC(CBaseClient_RemoveFromAllLists)
+{
+	if (!Util::server || !Util::server->IsActive())
+		return 0;
+
+	CBaseClient* pClient = Get_CBaseClient(LUA, 1, true);
+	if (pClient->GetServer()->IsHLTV())
+		LUA->ArgError(1, "the client is a HLTV client!");
+
+	CBaseServer* pServer = (CBaseServer*)Util::server;
+	pServer->m_Clients.FindAndRemove(pClient);
+	auto it = std::find(g_pQueueClients.begin(), g_pQueueClients.end(), (CGameClient*)pClient);
+	if (it != g_pQueueClients.end())
+		g_pQueueClients.erase(it);
+
+	return 0;
 }
 
 /*
@@ -884,6 +985,7 @@ void Push_CBaseClientMeta(GarrysMod::Lua::ILuaInterface* pLua)
 	Util::AddFunc(pLua, CBaseClient__index, "__index");
 	LUA_REGISTER_JIT(pLua, CBaseClient_GetTable, "GetTable");
 	LUA_REGISTER_JIT(pLua, CBaseClient_IsValid, "IsValid");
+	Util::AddFunc(pLua, CBaseClient_IsInvalid, "IsInvalid");
 
 	Util::AddFunc(pLua, CBaseClient_GetPlayerSlot, "GetPlayerSlot");
 	Util::AddFunc(pLua, CBaseClient_GetUserID, "GetUserID");
@@ -925,6 +1027,7 @@ void Push_CBaseClientMeta(GarrysMod::Lua::ILuaInterface* pLua)
 	Util::AddFunc(pLua, CBaseClient_SetSignonState, "SetSignonState");
 	Util::AddFunc(pLua, CBaseClient_WriteGameSounds, "WriteGameSounds");
 	Util::AddFunc(pLua, CBaseClient_SendServerInfo, "SendServerInfo");
+	Util::AddFunc(pLua, CBaseClient_FillServerInfo, "FillServerInfo");
 	Util::AddFunc(pLua, CBaseClient_SendSignonData, "SendSignonData");
 	Util::AddFunc(pLua, CBaseClient_SpawnPlayer, "SpawnPlayer");
 	Util::AddFunc(pLua, CBaseClient_ActivatePlayer, "ActivatePlayer");
@@ -934,6 +1037,10 @@ void Push_CBaseClientMeta(GarrysMod::Lua::ILuaInterface* pLua)
 	Util::AddFunc(pLua, CBaseClient_OnRequestFullUpdate, "OnRequestFullUpdate");
 	Util::AddFunc(pLua, CBaseClient_SetSteamID, "SetSteamID");
 	Util::AddFunc(pLua, CBaseClient_HasNetChannel, "HasNetChannel");
+	Util::AddFunc(pLua, CBaseClient_MoveIntoClient, "MoveIntoClient");
+	Util::AddFunc(pLua, CBaseClient_AddToQueueList, "AddToQueueList");
+	Util::AddFunc(pLua, CBaseClient_AddToServerList, "AddToServerList");
+	Util::AddFunc(pLua, CBaseClient_RemoveFromAllLists, "RemoveFromAllLists");
 
 	// CNetChan related functions
 	Util::AddFunc(pLua, CBaseClient_GetProcessingMessages, "GetProcessingMessages");
@@ -973,7 +1080,8 @@ LUA_FUNCTION_STATIC(CGameClient__tostring)
 	CGameClient* pClient = (CGameClient*)Get_CBaseClient(LUA, 1, false);
 	if (!pClient || !pClient->IsConnected())
 	{
-		if (pClient && gameserver_rawclients.GetBool())
+		// I removed the gameserver_rawclients check just to make things easier for developers :)
+		if (pClient /*&& gameserver_rawclients.GetBool()*/)
 			LUA->PushString("GameClient [EMPTY]");
 		else
 			LUA->PushString("GameClient [NULL]");
@@ -1528,7 +1636,7 @@ public:
 	bf_read m_DataIn;
 };
 
-static std::unordered_set<ILuaNetMessageHandler*> g_pNetMessageHandlers;
+static unordered_set<ILuaNetMessageHandler*> g_pNetMessageHandlers;
 ILuaNetMessageHandler::ILuaNetMessageHandler(GarrysMod::Lua::ILuaInterface* pLua)
 {
 	m_pLuaNetChanMessage = new NET_LuaNetChanMessage;
@@ -1859,7 +1967,7 @@ LUA_FUNCTION_STATIC(gameserver_GetClient)
 	if (iClientIndex >= Util::server->GetClientCount())
 	{
 		iClientIndex -= Util::server->GetClientCount();
-		if (iClientIndex >= g_pQueueClients.size())
+		if (iClientIndex >= (int)g_pQueueClients.size())
 			return 0;
 
 		CBaseClient* pClient = g_pQueueClients[iClientIndex];
@@ -2376,6 +2484,8 @@ LUA_FUNCTION_STATIC(gameserver_CreateNewClient)
 	return 1;
 }
 
+static thread_local bool g_bNoQueueLookup = false;
+static thread_local bool g_bDontRunLuaInFreeClient = false;
 LUA_FUNCTION_STATIC(gameserver_GetFreeClient)
 {
 	if (!Util::server || !Util::server->IsActive())
@@ -2384,8 +2494,28 @@ LUA_FUNCTION_STATIC(gameserver_GetFreeClient)
 	netadrnew_t adr;
 	adr.SetFromString(LUA->CheckString(1), LUA->GetBool(2));
 
+	g_bNoQueueLookup = LUA->GetBool(3);
+	g_bDontRunLuaInFreeClient = true;
 	CBaseServer* pServer = (CBaseServer*)Util::server;
-	Push_CBaseClient(LUA, pServer->GetFreeClient(*((netadr_t*)&adr)));
+	CBaseClient* pClient = pServer->GetFreeClient(*((netadr_t*)&adr));
+	g_bDontRunLuaInFreeClient = false;
+	g_bNoQueueLookup = false;
+
+	Push_CBaseClient(LUA, pClient);
+	return 1;
+}
+
+static CBaseClient* GetFreeQueueClient(CBaseServer* _this, netadr_t& adr);
+LUA_FUNCTION_STATIC(gameserver_GetFreeQueueClient)
+{
+	if (!Util::server || !Util::server->IsActive())
+		return 0;
+
+	netadrnew_t adr;
+	adr.SetFromString(LUA->CheckString(1), LUA->GetBool(2));
+
+	CBaseServer* pServer = (CBaseServer*)Util::server;
+	Push_CBaseClient(LUA, GetFreeQueueClient(pServer, *((netadr_t*)&adr)));
 	return 1;
 }
 
@@ -2569,6 +2699,7 @@ void CGameServerModule::LuaInit(GarrysMod::Lua::ILuaInterface* pLua, bool bServe
 		Util::AddFunc(pLua, gameserver_CreateFakeQueueClient, "CreateFakeQueueClient");
 		Util::AddFunc(pLua, gameserver_CreateNewClient, "CreateNewClient");
 		Util::AddFunc(pLua, gameserver_GetFreeClient, "GetFreeClient");
+		Util::AddFunc(pLua, gameserver_GetFreeQueueClient, "GetFreeQueueClient");
 		Util::AddFunc(pLua, gameserver_GetCPUUsage, "GetCPUUsage");
 		Util::AddFunc(pLua, gameserver_GetSocket, "GetSocket");
 		Util::AddFunc(pLua, gameserver_GetCurrentRandomNonce, "GetCurrentRandomNonce");
@@ -2597,13 +2728,8 @@ void CGameServerModule::LuaShutdown(GarrysMod::Lua::ILuaInterface* pLua)
 
 #define MAX_PLAYERS 128
 static ConVar gameserver_maxplayers("holylib_gameserver_maxplayers", "128", 0, "Experimental - max client limit (above 255 cannot be networked, though may work if they remain purely as a CGameClient)", true, 1, true, 8192);
-static Detouring::Hook detour_CBaseServer_GetFreeClient;
-static CBaseClient* hook_CBaseServer_GetFreeClient(CBaseServer* _this, netadr_t& adr)
+static CBaseClient* GetFreeQueueClient(CBaseServer* _this, netadr_t& adr)
 {
-	CBaseClient* pClient = detour_CBaseServer_GetFreeClient.GetTrampoline<Symbols::CBaseServer_GetFreeClient>()(_this, adr);
-	if (pClient)
-		return pClient;
-
 	CBaseClient* freeclient = nullptr;
 	for (CBaseClient* pClient : g_pQueueClients)
 	{
@@ -2612,7 +2738,7 @@ static CBaseClient* hook_CBaseServer_GetFreeClient(CBaseServer* _this, netadr_t&
 
 		if (pClient->IsConnected())
 		{
-			if (adr.CompareAdr(pClient->m_NetChannel->GetRemoteAddress()))
+			if (pClient->m_NetChannel && adr.CompareAdr(pClient->m_NetChannel->GetRemoteAddress()))
 			{
 				pClient->m_NetChannel->Shutdown( NULL );
 				pClient->m_NetChannel = NULL;
@@ -2628,15 +2754,51 @@ static CBaseClient* hook_CBaseServer_GetFreeClient(CBaseServer* _this, netadr_t&
 
 	if (!freeclient)
 	{
-		if ((_this->GetClientCount() + g_pQueueClients.size()) > gameserver_maxplayers.GetInt())
+		// IMPORTANT: Queue slots MUST be above maxClients!
+		if ((gpGlobals->maxClients + g_pQueueClients.size()) > gameserver_maxplayers.GetInt())
 			return nullptr;
 
-		freeclient = _this->CreateNewClient(_this->GetClientCount() + g_pQueueClients.size());
+		freeclient = _this->CreateNewClient(gpGlobals->maxClients + g_pQueueClients.size());
 		g_pQueueClients.push_back((CGameClient*)freeclient);
 	}
 	// We do not register it to m_Clients of the CBaseServer
 
 	return freeclient;
+}
+
+static Detouring::Hook detour_CBaseServer_GetFreeClient;
+static CBaseClient* hook_CBaseServer_GetFreeClient(CBaseServer* _this, netadr_t& adr)
+{
+	if (!g_bDontRunLuaInFreeClient && Lua::PushHook("HolyLib:GetFreeClient"))
+	{
+		g_Lua->PushString(adr.ToString());
+		if (g_Lua->CallFunctionProtected(2, 1, true))
+		{
+			CBaseClient* pClient = Get_CBaseClient(g_Lua, -1, false, true);
+			g_Lua->Pop(1);
+			if (pClient)
+			{
+				if (pClient->IsConnected())
+				{
+					if (g_pModuleManager.IsUnsafeCodeEnabled())
+					{
+						// If unsafe code is enabled we assume code always knows what it's doing!
+						Warning(PROJECT_NAME " - gameserver: \"HolyLib:GetFreeClient\" returned a connected client! Dropping!\n");
+						pClient->Disconnect("Natural Selection (Check Server Logs)");
+						return pClient;
+					} else
+						Warning(PROJECT_NAME " - gameserver: \"HolyLib:GetFreeClient\" returned a connected client! Ignoring!\n");
+				} else
+					return pClient;
+			}
+		}
+	}
+
+	CBaseClient* freeclient = detour_CBaseServer_GetFreeClient.GetTrampoline<Symbols::CBaseServer_GetFreeClient>()(_this, adr);
+	if (freeclient || g_bNoQueueLookup)
+		return freeclient;
+
+	return GetFreeQueueClient(_this, adr);
 }
 
 static Detouring::Hook detour_CBaseServer_CreateFakeClient;
@@ -2671,16 +2833,16 @@ static void hook_CGameServer_RemoveClientFromGame(CBaseServer* _this, CBaseClien
 static Detouring::Hook detour_CSteam3Server_ClientFindFromSteamID;
 static CBaseClient* hook_CSteam3Server_ClientFindFromSteamID(void* _this, CSteamID* steamID)
 {
-	CBaseClient* pClient = detour_CSteam3Server_ClientFindFromSteamID.GetTrampoline<Symbols::CSteam3Server_ClientFindFromSteamID>()(_this, steamID);
-	if (pClient)
-		return pClient;
+	CBaseClient* pFoundClient = detour_CSteam3Server_ClientFindFromSteamID.GetTrampoline<Symbols::CSteam3Server_ClientFindFromSteamID>()(_this, steamID);
+	if (pFoundClient)
+		return pFoundClient;
 
 	for (CBaseClient* pClient : g_pQueueClients)
 	{
 		if (!pClient->IsConnected() || pClient->IsFakeClient())
 			continue;
 
-		USERID_t id = pClient->GetNetworkID();
+		// USERID_t id = pClient->GetNetworkID();
 		if (pClient->m_SteamID == *steamID)
 			return pClient;
 	}
@@ -2886,7 +3048,7 @@ static bool hook_GModDataPack_IsSingleplayer(void* dataPack)
 }
 
 static Detouring::Hook detour_CBaseClient_ShouldSendMessages;
-static bool hook_CBaseClient_ShouldSendMessages(CBaseClient* cl)
+static bool hook_CBaseClient_ShouldSendMessages(CGameClient* cl) // NOTE: We use a CGameClient so that in a debug break I can verify the class here xd
 {
 	if ( !cl->IsConnected() )
 		return false;
@@ -3159,7 +3321,7 @@ static void MoveCGameClientIntoCGameClient(CGameClient* origin, CGameClient* tar
 
 static int FindFreeClientSlot()
 {
-	int nextFreeEntity = 255;
+	int nextFreeEntity = ABSOLUTE_PLAYER_LIMIT;
 	int count = Util::server->GetClientCount();
 	if (count > gpGlobals->maxClients)
 		count = gpGlobals->maxClients;
@@ -3172,6 +3334,30 @@ static int FindFreeClientSlot()
 			continue;
 
 		if (pClient->m_nEntityIndex < nextFreeEntity)
+			nextFreeEntity = pClient->m_nEntityIndex;
+	}
+
+	// We didn't fully fill yet soo the server has an free slot yet no allocated CGameClient
+	// ToDo:
+	// Consider if we want to just always call GetFreeClient instead of iterating ourselves.
+	// This was done originally like this, as the original queue implementation mixed server game clients and queue clients into the same list.
+	if (count < gpGlobals->maxClients && nextFreeEntity > MAX_PLAYERS)
+	{
+		CBaseServer* pServer = (CBaseServer*)Util::server;
+
+		// We must fill the adr with some random stuff just to avoid that any fake clients may be falsely kicked
+		netadrnew_s adr;
+		adr.SetType(netadrtype_t::NA_IP);
+		adr.SetIP(127, 0, 0, 1);
+		adr.SetPort(count);
+
+		// We call GetFreeClient as it will create a new CGameClient as no slots are free
+		g_bDontRunLuaInFreeClient = true; // Don't let lua mess with us!
+		g_bNoQueueLookup = true; // Don't return queue slots
+		CBaseClient* pClient = pServer->GetFreeClient(*((netadr_t*)&adr));
+		g_bNoQueueLookup = false;
+		g_bDontRunLuaInFreeClient = false;
+		if (pClient)
 			nextFreeEntity = pClient->m_nEntityIndex;
 	}
 
@@ -3401,7 +3587,7 @@ DETOUR_THISCALL_START()
 	DETOUR_THISCALL_ADDRETFUNC2(hook_CBaseClient_SetSignonState, bool, SetSignonState, CBaseClient*, int, int);
 	DETOUR_THISCALL_ADDRETFUNC0(hook_CBaseServer_IsMultiplayer, bool, IsMultiplayer, CBaseServer*);
 	DETOUR_THISCALL_ADDRETFUNC0(hook_GModDataPack_IsSingleplayer, bool, IsSingleplayer, void*);
-	DETOUR_THISCALL_ADDRETFUNC0(hook_CBaseClient_ShouldSendMessages, bool, ShouldSendMessages, CBaseClient*);
+	DETOUR_THISCALL_ADDRETFUNC0(hook_CBaseClient_ShouldSendMessages, bool, ShouldSendMessages, CGameClient*);
 	DETOUR_THISCALL_ADDRETFUNC1(hook_CBaseServer_ProcessConnectionlessPacket, bool, ProcessConnectionlessPacket, IServer*, netpacket_s*);
 	DETOUR_THISCALL_ADDRETFUNC1(hook_CNetChan_SendDatagram, int, SendDatagram, CNetChan*, bf_write*);
 	DETOUR_THISCALL_ADDFUNC0(hook_CNetChan_D2, D2, CNetChan*);

@@ -4,11 +4,10 @@
 #include <lua/ILuaInterface.h>
 #include "Platform.hpp"
 #include "vprof.h"
-#include <unordered_map>
 #include <algorithm>
 #include "symbols.h"
-#include "unordered_set"
 #include <shared_mutex>
+#include "unordered_stuff.h"
 
 #include "vstdlib/jobthread.h"
 #include "../luajit/src/lua.hpp"
@@ -20,7 +19,7 @@ extern IVEngineServer* engine;
 
 #define VPROF_BUDGETGROUP_HOLYLIB _T("HolyLib")
 
-#if ARCHITECTURE_IS_X86_64
+#if defined(GMOD_X86_64)
 #define V_CreateThreadPool CreateNewThreadPool
 #define V_DestroyThreadPool DestroyThreadPool
 #endif
@@ -58,6 +57,8 @@ class IServer;
 class IServerGameDLL;
 class ISteamUser;
 class CBaseHandle;
+class DTVarByOffset;
+struct LuaUserData;
 namespace Util
 {
 	#define LUA_REGISTRYINDEX	(-10000)
@@ -153,7 +154,7 @@ namespace Util
 	 * Pure debugging
 	 */
 #define HOLYLIB_UTIL_DEBUG_REFERENCES 0
-	extern std::unordered_set<int> g_pReference;
+	extern unordered_set<int> g_pReference;
 	extern ConVar holylib_debug_mainutil;
 	inline int ReferenceCreate(GarrysMod::Lua::ILuaInterface* LUA, const char* reason)
 	{
@@ -270,7 +271,7 @@ namespace Util
 	extern CBaseClient* Get_Client(GarrysMod::Lua::ILuaInterface* LUA, int iStackPos, bool bError);
 	extern INetChannel* Get_NetChannel(GarrysMod::Lua::ILuaInterface* LUA, int iStackPos, bool bError);
 
-	extern CBaseEntity* GetCBaseEntityFromEdict(edict_t* edict);
+	extern CBaseEntity* GetCBaseEntityFromEdict(const edict_t* edict);
 	extern CBaseEntity* GetCBaseEntityFromIndex(int nEntIndex);
 	extern CBaseEntity* GetCBaseEntityFromHandle(const CBaseHandle& pHandle);
 
@@ -296,6 +297,7 @@ namespace Util
 	// API to block Sys_Error calls
 	// Registers a message that if an error contains it it'll be skipped x times
 	extern void SysError_IgnoreError(std::string msg, uint32_t count);
+	extern const char* GetCurrentSysError();
 
 	extern bool ShouldLoad();
 	extern void CheckVersion(bool bAutoUpdate);
@@ -337,7 +339,7 @@ namespace Util
 	}
 
 	// Gameevent stuff
-	extern std::unordered_set<std::string> pBlockedEvents; // For direct access
+	extern unordered_set<std::string> pBlockedEvents; // For direct access
 	extern void BlockGameEvent(const char* pName);
 	extern void UnblockGameEvent(const char* pName);
 
@@ -351,12 +353,14 @@ namespace Util
 	// Returns a pointer to the given offset for the base, do the casting yourself.
 	inline void* GoToNetworkVarOffset(const void* pBase, int nOffset)
 	{
-		if (nOffset == -1)
-			return nullptr;
+		//if (nOffset == -1)
+		//	return nullptr;
 
 		// NOTE: Normally I'd use *(void**) to dereference it but apparently it's only a thing needed for vars that store a pointer / only m_GMOD_DataTable
 		return (void*)((char*)pBase + nOffset);
 	}
+
+	extern void AddDTVarToLoad(DTVarByOffset* pVar);
 
 	// More Lua stuff for UserData (NEVER NULL)
 	extern Symbols::lua_setfenv func_lua_setfenv;
@@ -408,17 +412,13 @@ namespace Util
 class DTVarByOffset
 {
 public:
-	DTVarByOffset(const char* pDTName, const char* pVarName)
-	{
-		m_pDTName = pDTName;
-		m_pVarName = pVarName;
-	}
-
-	DTVarByOffset(const char* pDTName, const char* pVarName, int nArraySize)
+	DTVarByOffset(const char* pDTName, const char* pVarName, int nArraySize = 0)
 	{
 		m_pDTName = pDTName;
 		m_pVarName = pVarName;
 		m_nArraySize = nArraySize;
+
+		Util::AddDTVarToLoad(this);
 	}
 
 	inline void Init()
@@ -433,26 +433,17 @@ public:
 
 	FORCEINLINE void* GetPointer(const void* pBase)
 	{
-		if (m_nOffset == -1)
-			Init();
-
 		return Util::GoToNetworkVarOffset(pBase, m_nOffset);
 	}
 
 	// For DTVars that store a pointer like m_GMOD_DataTable
 	FORCEINLINE void* GetPointerDereferenced(const void* pBase)
 	{
-		if (m_nOffset == -1)
-			Init();
-
 		return *(void**)Util::GoToNetworkVarOffset(pBase, m_nOffset);
 	}
 
 	FORCEINLINE void* GetPointerArray(const void* pBase, const int nArraySlot)
 	{
-		if (m_nOffset == -1)
-			Init();
-
 		return Util::GoToNetworkVarOffset(pBase, m_nOffset + (m_nArraySize * nArraySlot));
 	}
 

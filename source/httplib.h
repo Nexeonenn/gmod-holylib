@@ -261,8 +261,10 @@ using socket_t = int;
 #include <string>
 #include <sys/stat.h>
 #include <thread>
-#include <unordered_map>
-#include <unordered_set>
+// RaphaelIT7: We switch this over to use HolyLib's!
+#include <unordered_stuff.h>
+#include <unordered_map> // needed for std::unordered_multimap
+//#include <unordered_set>
 #include <utility>
 
 #ifdef CPPHTTPLIB_OPENSSL_SUPPORT
@@ -633,7 +635,7 @@ struct Request {
   MultipartFormDataMap files;
   Ranges ranges;
   Match matches;
-  std::unordered_map<std::string, std::string> path_params;
+  unordered_map<std::string, std::string> path_params;
   std::function<bool()> is_connection_closed = []() { return true; };
 
   // for client
@@ -6157,7 +6159,7 @@ inline PathParamsMatcher::PathParamsMatcher(const std::string &pattern) {
   // construction
   // If exceptions are disabled, only last duplicate path
   // parameter will be set
-  std::unordered_set<std::string> param_name_set;
+  unordered_set<std::string> param_name_set;
 #endif
 
   while (true) {

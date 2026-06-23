@@ -29,6 +29,8 @@
 // memdbgon must be the last include file in a .cpp file!!!
 #include "tier0/memdbgon.h"
 
+#undef isdigit // Fix for 64x
+
 /*
 	HolyLib's crash handler to hopefully create a useful crash dump without needing gdb setup
 	The goal of the crash handler is to ATTEMPT crash dumping even with unsafe signal functions!
@@ -83,6 +85,268 @@ private:
 	size_t offset;
 };
 
+static constexpr size_t bufferSize = 270;
+static constexpr size_t maxArguments = 32;
+static FORCEINLINE int Mangle_ParseLength(const char (&pInput)[bufferSize], size_t& nInputPos)
+{
+	size_t nLength = 0;
+	while (pInput[nInputPos] >= '0' && pInput[nInputPos] <= '9')
+		nLength = nLength * 10 + (pInput[nInputPos++] - '0');
+
+	return nLength;
+}
+
+/*
+	A signal safe method simple to demangle C++ names
+*/
+static FORCEINLINE void UnmangleCppName(const char (&pInput)[bufferSize], char (&pOutput)[bufferSize])
+{
+	struct Argument
+	{
+		unsigned short pos;
+		unsigned char length;
+	};
+
+	char pTempBuffer[bufferSize]; // pInput may equal pOutput! So we must write into a temporary buffer
+	Argument argPos[maxArguments] = {0};
+	size_t currentArg = 0;
+
+	size_t nInputPos = 0;
+	size_t nOutputPos = 0;
+	if (pInput[nInputPos++] != '_' || pInput[nInputPos++] != 'Z')
+	{
+		if (pInput != pOutput)
+			memcpy(pOutput, pInput, bufferSize);
+
+		return;
+	}
+
+#define SAFE_CHECK(pos) if ((pos) >= bufferSize) return;
+
+	// Got a namespace / class
+	if (pInput[nInputPos] == 'N')
+	{
+		++nInputPos;
+		while (pInput[nInputPos] != 'E')
+		{
+			int len = Mangle_ParseLength(pInput, nInputPos);
+			SAFE_CHECK(nOutputPos+len)
+			for (int i=0; i<len; i++)
+				pTempBuffer[nOutputPos++] = pInput[nInputPos++];
+
+			if (pInput[nInputPos] != 'E')
+			{
+				SAFE_CHECK(nOutputPos+2)
+				pTempBuffer[nOutputPos++] = ':';
+				pTempBuffer[nOutputPos++] = ':';
+			}
+		}
+		++nInputPos;
+	} else {
+		// We must skip any other flag like
+		// L = local symbol
+		// T = type info?
+		// V = vtable?
+		// J, G, M = magic?
+		while (!isdigit(pInput[nInputPos]))
+			SAFE_CHECK(nInputPos++)
+
+		int len = Mangle_ParseLength(pInput, nInputPos);
+		SAFE_CHECK(nOutputPos+len)
+		for (int i=0; i<len; i++)
+			pTempBuffer[nOutputPos++] = pInput[nInputPos++];
+	}
+
+	SAFE_CHECK(nOutputPos+1)
+	pTempBuffer[nOutputPos++] = '(';
+	argPos[currentArg].pos = nOutputPos;
+
+	bool bIsNext = false;
+	char pAddAfterNext = 0;
+	size_t totalIterations = 0;
+	while (pInput[nInputPos])
+	{
+		// We took way too many iterations! So we failed
+		if (++totalIterations > 10000)
+			break;
+
+		if (pAddAfterNext)
+			bIsNext = true;
+
+		switch (pInput[nInputPos])
+		{
+			case 'v':
+				SAFE_CHECK(nOutputPos+4)
+				memcpy(pTempBuffer + nOutputPos, "void", 4);
+				nOutputPos += 4;
+				++nInputPos;
+				break;
+
+			case 'i':
+				SAFE_CHECK(nOutputPos+3)
+				memcpy(pTempBuffer + nOutputPos, "int", 3);
+				nOutputPos += 3;
+				++nInputPos;
+				break;
+
+			case 'f':
+				SAFE_CHECK(nOutputPos+5)
+				memcpy(pTempBuffer + nOutputPos, "float", 5);
+				nOutputPos += 5;
+				++nInputPos;
+				break;
+
+			case 'd':
+				SAFE_CHECK(nOutputPos+6)
+				memcpy(pTempBuffer + nOutputPos, "double", 6);
+				nOutputPos += 6;
+				++nInputPos;
+				break;
+
+			case 'b':
+				SAFE_CHECK(nOutputPos+4)
+				memcpy(pTempBuffer + nOutputPos, "bool", 4);
+				nOutputPos += 4;
+				++nInputPos;
+				break;
+
+			case 'c':
+				SAFE_CHECK(nOutputPos+4)
+				memcpy(pTempBuffer + nOutputPos, "char", 4);
+				nOutputPos += 4;
+				++nInputPos;
+				break;
+
+			case 'l':
+				SAFE_CHECK(nOutputPos+4)
+				memcpy(pTempBuffer + nOutputPos, "long", 4);
+				nOutputPos += 4;
+				++nInputPos;
+				break;
+
+			case 'P':
+				pAddAfterNext = '*';
+				++nInputPos;
+				break;
+
+			case 'R':
+				pAddAfterNext = '&';
+				++nInputPos;
+				break;
+
+			case 'K':
+				SAFE_CHECK(nOutputPos+6)
+				memcpy(pTempBuffer + nOutputPos, "const ", 6);
+				nOutputPos += 6;
+				++nInputPos;
+				bIsNext = false;
+				break;
+
+			case 'S': // substitution
+				{
+					int subName = Mangle_ParseLength(pInput, ++nInputPos);
+					if (pInput[nInputPos++] != '_' || subName < 0)
+						return; // Invalid!
+
+					// FK THESE!
+					// Substitutions suck as it is fking unknown what is one
+					// How the heck should I know when there is nothing clear about that shit
+					if (currentArg > --subName)
+						return;
+
+					// If a substitution is unknown then we must reuse the previous one?
+					Argument& pArgument = argPos[currentArg-1];
+					if (pArgument.length == 0)
+						return; // Invalid argument was used
+
+					SAFE_CHECK(nOutputPos + pArgument.length);
+					memcpy(pTempBuffer + nOutputPos, pTempBuffer + pArgument.pos, pArgument.length);
+					nOutputPos += pArgument.length;
+					break;
+				}
+
+			case '0':
+			case '1':
+			case '2':
+			case '3':
+			case '4':
+			case '5':
+			case '6':
+			case '7':
+			case '8':
+			case '9':
+				{
+					int len = Mangle_ParseLength(pInput, nInputPos);
+					SAFE_CHECK(nOutputPos+len)
+					for (int i=0; i<len; i++)
+						pTempBuffer[nOutputPos++] = pInput[nInputPos++];
+
+					break;
+				}
+
+			case 'N':
+				{
+					++nInputPos;
+					while (pInput[nInputPos] != 'E')
+					{
+						int len = Mangle_ParseLength(pInput, nInputPos);
+						SAFE_CHECK(nOutputPos+len)
+						for (int i=0; i<len; i++)
+							pTempBuffer[nOutputPos++] = pInput[nInputPos++];
+
+						if (pInput[nInputPos] != 'E')
+						{
+							SAFE_CHECK(nOutputPos+2)
+							pTempBuffer[nOutputPos++] = ':';
+							pTempBuffer[nOutputPos++] = ':';
+						}
+					}
+					++nInputPos;
+				}
+				break;
+
+			default:
+				++nInputPos;
+				break;
+		}
+
+		if (pAddAfterNext && bIsNext)
+		{
+			SAFE_CHECK(nOutputPos+1)
+			pTempBuffer[nOutputPos++] = pAddAfterNext;
+			pAddAfterNext = 0;
+			bIsNext = false;
+		}
+		
+		if (pInput[nInputPos] && !pAddAfterNext)
+		{
+			argPos[currentArg].length = nOutputPos - argPos[currentArg].pos;
+
+			SAFE_CHECK(nOutputPos+2)
+			pTempBuffer[nOutputPos++] = ',';
+			pTempBuffer[nOutputPos++] = ' ';
+
+			argPos[++currentArg].pos = nOutputPos;
+
+			if (currentArg >= maxArguments)
+				return; // Too many args >:(
+		}
+	}
+
+	SAFE_CHECK(nOutputPos+2)
+	pTempBuffer[nOutputPos++] = ')';
+	pTempBuffer[nOutputPos++] = '\0';
+
+	// We clear all remaining since it may mess up stuff
+	// Turns out- I was missing ++ when adding the null terminator :sob:
+	//size_t leftOver = sizeof(pOutput) - nOutputPos;
+	//if (pInput == pOutput && leftOver > 0)
+	//	memset(pOutput + nOutputPos, 0, leftOver);
+
+	memcpy(pOutput, pTempBuffer, nOutputPos);
+#undef SAFE_CHECK
+}
+
 #if SYSTEM_LINUX
 /*
 	Helper class since I am lazy
@@ -119,13 +383,27 @@ struct ElfSection
 
 struct ElfSections
 {
+	ElfSection dynsym;
+	ElfSection dynstr;
+	ElfSection symtab;
+	ElfSection strtab;
 	ElfSection debug_info;
 	ElfSection debug_line;
 	ElfSection debug_abbrev;
+	ElfSection debug_str;
+	uint16_t dwarf_version;
 };
 
+#pragma pack(push,1)
+struct DWARF_BasicCUHeader
+{
+	uint32_t unit_length;
+	uint16_t version;
+};
+#pragma pack(pop)
+
 // Opens & Reads the file to find the debug sections
-static void ReadElfSections(char* filePath, ElfSections& sections)
+static void ReadElfSections(const char* filePath, ElfSections& sections)
 {
 	if (!filePath || !filePath[0])
 		return;
@@ -187,30 +465,137 @@ static void ReadElfSections(char* filePath, ElfSections& sections)
 		{
 			sections.debug_line.offset = shdrs[i].sh_offset;
 			sections.debug_line.size = shdrs[i].sh_size;
+		} else if (!strcmp(name, ".debug_str"))
+		{
+			sections.debug_str.offset = shdrs[i].sh_offset;
+			sections.debug_str.size = shdrs[i].sh_size;
+		} else if (!strcmp(name, ".symtab"))
+		{
+			sections.symtab.offset = shdrs[i].sh_offset;
+			sections.symtab.size = shdrs[i].sh_size;
+		} else if (!strcmp(name, ".strtab"))
+		{
+			sections.strtab.offset = shdrs[i].sh_offset;
+			sections.strtab.size = shdrs[i].sh_size;
+		} else if (!strcmp(name, ".dynstr"))
+		{
+			sections.dynstr.offset = shdrs[i].sh_offset;
+			sections.dynstr.size = shdrs[i].sh_size;
+		} else if (!strcmp(name, ".dynsym"))
+		{
+			sections.dynsym.offset = shdrs[i].sh_offset;
+			sections.dynsym.size = shdrs[i].sh_size;
 		}
 	}
+
+	if (sections.debug_info.offset > 0)
+	{
+		lseek(fd, sections.debug_info.offset, SEEK_SET);
+		DWARF_BasicCUHeader header;
+		read(fd, &header, sizeof(header));
+		sections.dwarf_version = header.version;
+	}
 }
+
+#if !PLATFORM_64BITS
+#define ELF_ST_TYPE ELF32_ST_TYPE
+#else
+#define ELF_ST_TYPE ELF64_ST_TYPE
+#endif
+
+static void ReadElfName(const char* filePath, const ElfSections& sections, uintptr_t searchAddress, uintptr_t& foundAddress, char (&pOutputName)[bufferSize])
+{
+	if (!filePath || !filePath[0] || sections.symtab.offset == 0)
+		return;
+
+	int fd = open(filePath, O_RDONLY);
+	if (fd < 0)
+		return;
+
+	ScopedFileDescriptor scopedFD(fd);
+	lseek(fd, sections.symtab.offset, SEEK_SET);
+
+	size_t closestOffset = 0;
+	size_t closestOffsetName = 0;
+
+	ElfW(Sym) symtab;
+	size_t count = sections.symtab.size / sizeof(symtab);
+	for (size_t i=0; i<count; ++i)
+	{
+		read(fd, &symtab, sizeof(symtab));
+
+		if (ELF_ST_TYPE(symtab.st_info) != STT_FUNC)
+			continue;
+
+		if (symtab.st_value == searchAddress)
+		{
+			closestOffset = symtab.st_value;
+			closestOffsetName = symtab.st_name;
+			break;
+		}
+
+		if (closestOffset < symtab.st_value && symtab.st_value < searchAddress && (symtab.st_value + symtab.st_size) >= searchAddress)
+		{
+			closestOffset = symtab.st_value;
+			closestOffsetName = symtab.st_name;
+
+			/*off_t curPos = lseek(fd, 0, SEEK_CUR);
+			lseek(fd, sections.strtab.offset + symtab.st_name, SEEK_SET);
+			read(fd, pOutputName, sizeof(pOutputName));
+			lseek(fd, curPos, SEEK_SET);
+
+			printf("%s 0x%lx size=%lu\n", pOutputName, symtab.st_value, symtab.st_size);*/
+		}
+	}
+
+	if (closestOffset > 0 && closestOffsetName > 0)
+	{
+		foundAddress = closestOffset;
+		lseek(fd, sections.strtab.offset + closestOffsetName, SEEK_SET);
+		read(fd, pOutputName, sizeof(pOutputName));
+		// printf("%s 0x%lx size=%lu\n", pOutputName, symtab.st_value, symtab.st_size);
+		// NOTE: It is already null terminated in strtab!
+	}
+}
+
+struct ModuleEntry
+{
+	uintptr_t base; // Base in memory
+	char path[270];
+	ElfSections sections;
+};
+
+struct FunctionResult
+{
+	// Input
+	const ModuleEntry* pEntry = nullptr;
+	uintptr_t nAddress = 0;
+
+	FORCEINLINE uintptr_t GetFileOffset()
+	{
+		fileOffset = pEntry ? (nAddress - pEntry->base) : nAddress;
+		return fileOffset;
+	}
+
+	// Outputs
+	const char* funcName = nullptr;
+	uintptr_t funcOffset = 0;
+	uintptr_t fileOffset = 0;
+};
 
 // Intended to live on the stack to be unaffected in case of memory corruption
 class ModuleInfo
 {
 public:
-	struct Entry
-	{
-		uintptr_t base;
-		char path[270];
-		ElfSections sections;
-	};
-
 	ModuleInfo()
 	{
 		memset(this, 0, sizeof(ModuleInfo));
 		dl_iterate_phdr(ModuleInfo::PHDRCallback, this);
 	}
 
-	Entry* AddModule(uintptr_t baseAddress, const char* pFileName)
+	ModuleEntry* AddModule(uintptr_t baseAddress, const char* pFileName)
 	{
-		Entry& pEntry = m_pModules[m_nModules++];
+		ModuleEntry& pEntry = m_pModules[m_nModules++];
 		if (m_nModules >= MAX_MODULES)
 			return nullptr;
 
@@ -239,13 +624,13 @@ public:
 		return 0;
 	}
 
-	const Entry* FindModule(uintptr_t nAddress)
+	const ModuleEntry* FindModule(uintptr_t nAddress)
 	{
-		Entry* foundEntry = nullptr;
+		ModuleEntry* foundEntry = nullptr;
 		uintptr_t foundAddress = -1;
 		for (int nModule = 0; nModule < m_nModules; ++nModule)
 		{
-			Entry& pEntry = m_pModules[nModule];
+			ModuleEntry& pEntry = m_pModules[nModule];
 			// Find the closest base to our address
 			if (nAddress >= pEntry.base && pEntry.base > foundAddress) 
 			{
@@ -265,34 +650,50 @@ public:
 	}
 
 	// pEntry can be a nullptr!
-	void FindFunctionInfo(const Entry* pEntry, uintptr_t nAddress, const char** outName, uintptr_t* outOffset)
+	void FindFunctionInfo(FunctionResult& pResult)
 	{
-		Dl_info dlInfo;
-		if (dladdr((void*)nAddress, &dlInfo) && dlInfo.dli_sname)
+		uintptr_t fileOffset = pResult.GetFileOffset();
+		if (pResult.pEntry)
 		{
-			strncpy(m_strReturnBuffer, dlInfo.dli_sname, sizeof(m_strReturnBuffer));
-			*outName = m_strReturnBuffer;
-			*outOffset = nAddress - (uintptr_t)dlInfo.dli_saddr;
-			return;
+			uintptr_t foundAddress = -1;
+			ReadElfName(pResult.pEntry->path, pResult.pEntry->sections, fileOffset, foundAddress, m_strReturnBuffer);
+			if (foundAddress != -1)
+			{
+				UnmangleCppName(m_strReturnBuffer, m_strReturnBuffer);
+				pResult.funcName = m_strReturnBuffer;
+				pResult.funcOffset = fileOffset - foundAddress;
+				return;
+			}
 		}
 
-		uintptr_t offset = pEntry ? (nAddress - pEntry->base) : nAddress;
+		// We push dladdr back since our implementation above gives more control of the information
+		// We dropped it since were better >:3
+		// Actually- we still use it as this can read libc.so.6
+		Dl_info dlInfo;
+		if (dladdr((void*)fileOffset, &dlInfo) && dlInfo.dli_sname)
+		{
+			strncpy(m_strReturnBuffer, dlInfo.dli_sname, sizeof(m_strReturnBuffer));
+			UnmangleCppName(m_strReturnBuffer, m_strReturnBuffer);
+			pResult.funcName = m_strReturnBuffer;
+			pResult.funcOffset = fileOffset - (uintptr_t)dlInfo.dli_saddr;
+			return;
+		}
 
 		m_strReturnBuffer[0] = '?';
 		m_strReturnBuffer[1] = '?';
 		m_strReturnBuffer[2] = '\0';
 
-		*outName = m_strReturnBuffer;
-		*outOffset = offset;
+		pResult.funcName = m_strReturnBuffer;
+		pResult.funcOffset = fileOffset;
 	}
 
 private:
 	static constexpr int MAX_MODULES = 64;
-	Entry m_pModules[MAX_MODULES];
+	ModuleEntry m_pModules[MAX_MODULES];
 	int m_nModules = 0;
 
 	// For FindFunctionName as when we return we still want it to be valid
-	char m_strReturnBuffer[270];
+	char m_strReturnBuffer[bufferSize];
 };
 
 struct SavedCrash
@@ -301,9 +702,9 @@ struct SavedCrash
 	siginfo_t info;
 	ucontext_t context;
 
-	void Store(int signal, siginfo_t* signalInfo, void* ucontext)
+	void Store(int signalCode, siginfo_t* signalInfo, void* ucontext)
 	{
-		this->signal = signal;
+		this->signal = signalCode;
 		memcpy(&this->info, signalInfo, sizeof(siginfo_t));
 		memcpy(&this->context, (ucontext_t*)ucontext, sizeof(ucontext_t));
 	}
@@ -347,8 +748,8 @@ static void DumpLuaState(int fileDescriptor)
 	dprintf(fileDescriptor, "Lua Stack values:\n");
 
 	lua_State* pState = g_Lua->GetState();
-	TValue* pBase = pState->base;
-	int nTop = (int)(pState->top - pState->base);
+	TValue* pBase = Lua::LuaBase(pState);
+	int nTop = (int)(Lua::LuaTop(pState) - pBase);
 	dprintf(fileDescriptor, "  Stack size: %i\n", nTop);
 	for (int i=0; i<nTop; ++i)
 	{
@@ -477,6 +878,9 @@ static void CrashHandler(int signal, siginfo_t* signalInfo, void* ucontext)
 			break;
 	}
 
+	if (Util::GetCurrentSysError())
+		dprintf(fileDescriptor, "Engine error: %s\n", Util::GetCurrentSysError());
+
 	ucontext_t* uc = (ucontext_t*)ucontext;
 #if defined(__x86_64__)
 	void* ip = (void*)uc->uc_mcontext.gregs[REG_RIP];
@@ -490,12 +894,50 @@ static void CrashHandler(int signal, siginfo_t* signalInfo, void* ucontext)
 	// Later goal is to figure out if we can safely call to Lua.
 	// bool in_vphysics = strstr(module_name, "vphysics") != nullptr;
 
-	const ModuleInfo::Entry* mod = pModuleInfo.FindModule((uintptr_t)ip);
+	const ModuleEntry* mod = pModuleInfo.FindModule((uintptr_t)ip);
 	const char* moduleName = mod ? mod->path : "unknown";
 	dprintf(fileDescriptor, "Crashed in module: %s\n", moduleName);
 
 	dprintf(fileDescriptor, "HolyLib: %s\n", HolyLib_GetPluginDescription());
 	dprintf(fileDescriptor, "Triggered by watcher?: %s\n", g_bInducedCrash.load() ? "true" : "false");
+
+	int gmodVersionDescriptor = ::open("garrysmod/garrysmod.ver", O_RDONLY);
+	if (gmodVersionDescriptor > 0)
+	{
+		char readBuffer[128];
+		char readData[3][32] = {0}; // 0 = versionDate, 1 = verionNum, 2 = branch
+		int readDataLength[3] = {0};
+
+		int currentLine = 0;
+		while (currentLine < 3)
+		{
+			ssize_t readNum = ::read(gmodVersionDescriptor, readBuffer, sizeof(readBuffer));
+			if (readNum <= 0)
+				break;
+
+			for (ssize_t i=0; i<readNum; ++i)
+			{
+				char c = readBuffer[i];
+				if (c == '\n')
+				{
+					if (currentLine < 3)
+						readData[currentLine][readDataLength[currentLine]] = '\0';
+
+					currentLine++;
+					if (currentLine >= 3)
+						break;
+				} else {
+					if (currentLine < 3 && readDataLength[currentLine] < 31)
+						readData[currentLine][readDataLength[currentLine]++] = c;
+				}
+			}
+		}
+
+		::close(gmodVersionDescriptor);
+
+		dprintf(fileDescriptor, "GMod Branch: %s\n", readData[2]);
+		dprintf(fileDescriptor, "GMod Version: %s\n", readData[0]);
+	}
 
 	dprintf(fileDescriptor, "Registers:\n");
 #if defined(__x86_64__)
@@ -538,7 +980,6 @@ static void CrashHandler(int signal, siginfo_t* signalInfo, void* ucontext)
 		dprintf(fileDescriptor, "Backtrace generation skipped due to unsafe conditions!\n");
 	} else {
 		// ToDo: backtrace is not really signal safe! It could deadlock!
-		constexpr int bufferSize = 255;
 		void* buffer[bufferSize];
 		g_bAttemptedBacktrace.store(true);
 		int nptrs = backtrace(buffer, bufferSize);
@@ -547,12 +988,13 @@ static void CrashHandler(int signal, siginfo_t* signalInfo, void* ucontext)
 		for (int i = 0; i < nptrs; ++i)
 		{
 			uintptr_t addr = (uintptr_t)buffer[i];
-			const ModuleInfo::Entry* fmod = pModuleInfo.FindModule(addr);
-			uintptr_t offset = 0;
-			const char* fileName;
-			pModuleInfo.FindFunctionInfo(fmod, addr, &fileName, &offset);
+			const ModuleEntry* fmod = pModuleInfo.FindModule(addr);
+			FunctionResult funcResult;
+			funcResult.pEntry = fmod;
+			funcResult.nAddress = addr;
+			pModuleInfo.FindFunctionInfo(funcResult);
 
-			dprintf(fileDescriptor, "  %p: %s + 0x%" PRIxPTR " [%s]\n", (void*)addr, fileName, offset, fmod ? fmod->path : "UNKNOWN");
+			dprintf(fileDescriptor, "  %-10p: %s + 0x%" PRIxPTR " [%s - %p]\n", (void*)addr, funcResult.funcName, funcResult.funcOffset, fmod ? fmod->path : "UNKNOWN", (void*)funcResult.fileOffset);
 		}
 	}
 
@@ -618,10 +1060,19 @@ static void DoLuaCallback(bool bMainThreadCrash)
 	lua_State* pState = g_Lua->GetState();
 	if (!pState)
 		return;
+	
+	bool isCoroutine = false;
+	lua_State* pMainState = Lua::MainState(pState);
+	if (!pMainState)
+		dprintf(signalData->fileDescriptor, "Invalid Main state!\n");
+	else {
+		isCoroutine = pMainState != pState;
+		dprintf(signalData->fileDescriptor, "Inside Coroutine?: %s\n", isCoroutine ? "true" : "false");
+	}
 
 	if (bMainThreadCrash && !g_bInducedCrash.load())
 	{
-		dprintf(signalData->fileDescriptor, "Inside Trace?: %s\n", (G(pState) && tvref(G(pState)->jit_base)) ? "true" : "false");
+		dprintf(signalData->fileDescriptor, "Inside Trace?: %s\n", (Lua::GlobalJITBase(pState) ? "true" : "false"));
 
 		GarrysMod::Lua::ILuaShared* pLuaShared = Lua::GetShared();
 		if (pLuaShared)
@@ -630,22 +1081,37 @@ static void DoLuaCallback(bool bMainThreadCrash)
 			dprintf(signalData->fileDescriptor, pLuaShared->GetStackTraces());
 		}
 
-		dprintf(signalData->fileDescriptor, "Lua Stack values:\n");
-
-		Lua::pExecutingInterface = g_Lua; // Set since TValueToString uses GetGCStrData
-		TValue* pBase = pState->base;
-		int nTop = (int)(pState->top - pState->base);
-		dprintf(signalData->fileDescriptor, "  Stack size: %i\n", nTop);
-		for (int i=0; i<nTop; ++i)
+		for (int flip=0; flip<(pMainState != pState ? 2 : 1); ++flip)
 		{
-			dprintf(signalData->fileDescriptor, "  %i: %s\n", i, Lua::TValueToString(pBase));
-			pBase++;
+			lua_State* pCurrentState = flip == 0 ? pState : pMainState;
+			if (!pCurrentState)
+				break;
+
+			dprintf(signalData->fileDescriptor, "Lua Stack values (%s):\n", (isCoroutine && pState == pCurrentState) ? "Current Coroutine state" : "Main State");
+
+			Lua::pExecutingInterface = g_Lua; // Set since TValueToString uses GetGCStrData
+			TValue* pBase = Lua::LuaBase(pCurrentState);
+			int nTop = (int)(Lua::LuaTop(pCurrentState) - pBase);
+			dprintf(signalData->fileDescriptor, "  Stack size: %i\n", nTop);
+			if (nTop < 0)
+				dprintf(signalData->fileDescriptor, "  Invalid Stack! No Dump!\n");
+			else {
+				for (int i=0; i<nTop; ++i)
+				{
+					dprintf(signalData->fileDescriptor, "  %i: %s\n", i, Lua::TValueToString(pBase));
+					pBase++;
+				}
+			}
 		}
 	}
 
 	// We stop the GC in case a crash is related to an memory allocator or some bs
 	Util::func_lua_gc(pState, LUA_GCSTOP, 0);
 	Util::func_lua_setallocf(pState, LuaAlloc::alloc, &signalData->luaAlloc);
+
+	// We don't want to callback if were in a coroutine!
+	if (pMainState)
+		g_Lua->SetState(pMainState);
 
 	if (Lua::PushHook("HolyLib:OnServerCrash"))
 	{

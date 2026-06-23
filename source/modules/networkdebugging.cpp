@@ -7,7 +7,7 @@
 #include <deque>
 #include "netmessages.h"
 #include <convar.h>
-#include "cnetchan.h"
+#include "net_chan.h"
 #include <atomic>
 
 // memdbgon must be the last include file in a .cpp file!!!
@@ -79,7 +79,7 @@ struct NetHistory
 	}
 };
 
-static std::unordered_map<void*, NetHistory*> g_pNetHistory;
+static unordered_map<void*, NetHistory*> g_pNetHistory;
 static std::shared_mutex g_pNetHistoryMutex;
 
 // MUST be thread_local as iirc with SendSnapshot a disconnect can happen on other threads!

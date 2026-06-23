@@ -148,11 +148,10 @@ void CHolyLuaModule::HolyLua_Init()
 void CHolyLuaModule::HolyLua_Shutdown()
 {
 	// NOTE: Our own mutex supports this style of usage, a normal std::mutex would deadlock!
-	Lua::ScopedThreadAccess pThreadScope;
+	Lua::CriticalThreadAccess pCriticalThreadScope;
 	auto LUA = GetHolyLuaInterface();
 	g_pModuleManager.LuaShutdown(LUA);
 
-	Lua::CriticalThreadAccess pCriticalThreadScope;
 	Lua::DestroyInterface(LUA);
 	g_HolyLua.store(nullptr);
 }
@@ -239,7 +238,7 @@ struct ILuaValue
 
 	double number = -1;
 	const char* string = "";
-	std::unordered_map<ILuaValue*, ILuaValue*> tbl;
+	unordered_map<ILuaValue*, ILuaValue*> tbl;
 	float x, y, z;
 	void* data = nullptr; // Used for LUA_File
 };
