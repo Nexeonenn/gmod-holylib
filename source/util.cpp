@@ -428,7 +428,7 @@ CBaseEntity* Util::GetCBaseEntityFromEdict(const edict_t* edict)
 
 CBaseEntity* Util::GetCBaseEntityFromIndex(int nEntIndex)
 {
-	if (nEntIndex < 0 || nEntIndex > MAX_EDICTS)
+	if (nEntIndex < 0 || nEntIndex >= MAX_EDICTS)
 		return nullptr;
 
 	return Util::servergameents->EdictToBaseEntity(Util::engineserver->PEntityOfEntIndex(nEntIndex));
@@ -734,7 +734,10 @@ DLL_EXPORT void hook_Sys_Error_Internal_ignore_this_function_in_crashes_check_yo
 		}
 	}
 
-	vsnprintf(g_pCurrentSysError, sizeof(g_pCurrentSysError), error, argsList);
+	va_list argsCopy;
+	va_copy(argsCopy, argsList);
+	vsnprintf(g_pCurrentSysError, sizeof(g_pCurrentSysError), error, argsCopy);
+	va_end(argsCopy);
 	detour_Sys_Error_Internal.GetTrampoline<Symbols::Sys_Error_Internal>()(bMinidump, error, argsList);
 	memset(g_pCurrentSysError, 0, sizeof(g_pCurrentSysError));
 }
@@ -746,6 +749,10 @@ DETOUR_THISCALL_START()
 	DETOUR_THISCALL_ADDRETFUNC2( hook_CGameEventManager_CreateEvent, IGameEvent*, CreateEvent, void*, const char*, bool );
 DETOUR_THISCALL_FINISH();
 #endif
+
+static bool g_bLoadedGModVersion = false;
+static char g_pGModBranch[64] = {0};
+static uint64_t g_pGModVersion = 0;
 
 
 IGet* Util::get = nullptr;
@@ -958,6 +965,9 @@ void Util::AddDetour()
 	 * 
 	 * New Idea: I'm updating everything. The goal is to support any realm & even multiple ILuaInterfaces at the same time (Preparation for lua_threaded support).
 	 */
+
+	// Load GMod version
+	// Copied this code from the crashhandler
 }
 
 void Util::RemoveDetour()
@@ -1118,6 +1128,54 @@ void Util::CheckVersion(bool bAutoUpdate) // This is called only when holylib is
 	} else if (pTree.GetChild("status").Value() == "toonew") {
 		Msg(PROJECT_NAME " - versioncheck: We are running a too new version? Damn...\n");
 	}
+}
+
+uint64_t Util::GetGModVersionNum()
+{
+	if (!g_bLoadedGModVersion)
+	{
+		int gmodVersionDescriptor = ::open("garrysmod/garrysmod.ver", O_RDONLY);
+		if (gmodVersionDescriptor > 0)
+		{
+			char readBuffer[128];
+			char readData[3][32] = {0}; // 0 = versionDate, 1 = verionNum, 2 = branch
+			int readDataLength[3] = {0};
+
+			int currentLine = 0;
+			while (currentLine < 3)
+			{
+				ssize_t readNum = ::read(gmodVersionDescriptor, readBuffer, sizeof(readBuffer));
+				if (readNum <= 0)
+					break;
+
+				for (ssize_t i=0; i<readNum; ++i)
+				{
+					char c = readBuffer[i];
+					if (c == '\n')
+					{
+						if (currentLine < 3)
+							readData[currentLine][readDataLength[currentLine]] = '\0';
+
+						currentLine++;
+						if (currentLine >= 3)
+							break;
+					} else {
+						if (currentLine < 3 && readDataLength[currentLine] < 31)
+							readData[currentLine][readDataLength[currentLine]++] = c;
+					}
+				}
+			}
+
+			::close(gmodVersionDescriptor);
+
+			strncpy(g_pGModBranch, readData[2], sizeof(g_pGModBranch));
+			g_pGModVersion = strtoull(readData[0], nullptr, 10);
+			Msg(PROJECT_NAME " - Found GMod Version: %llu\n", g_pGModVersion);
+		}
+		g_bLoadedGModVersion = true;
+	}
+
+	return g_pGModVersion;
 }
 
 extern void LoadDLLs(); // From the dllsystem.cpp

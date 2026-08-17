@@ -625,21 +625,21 @@ struct EntityTransmitCache // Well.... Still kinda acts as a tick-based cache, t
 		{
 			Msg("Fullcheck:\n");
 			for (int i=0; i<=nFullEdictCount; ++i)
-				Msg("    %i: %s[%i]\n", i, pFullEntityList[i]->GetClassname(), pFullEntityList[i]->edict()->m_EdictIndex);
+				Msg("    %i: %s [%i]\n", i, pFullEntityList[i]->GetClassname(), pFullEntityList[i]->edict()->m_EdictIndex);
 
 			Msg("PVS:\n");
 			for (int i=0; i<=nPVSEdictCount; ++i)
-				Msg("    %i: %s[%i]\n", i, pPVSEntityList[i]->GetClassname(), pPVSEntityList[i]->edict()->m_EdictIndex);
+				Msg("    %i: %s [%i]\n", i, pPVSEntityList[i]->GetClassname(), pPVSEntityList[i]->edict()->m_EdictIndex);
 
 			Msg("Never:\n");
-			for (int i=0; i<=pNeverTransmitBits.GetNumBits(); ++i)
+			for (int i=0; i<pNeverTransmitBits.GetNumBits(); ++i)
 			{
 				if (pNeverTransmitBits.IsBitSet(i))
 					Msg("    %i\n", i);
 			}
 
 			Msg("Always:\n");
-			for (int i=0; i<=pAlwaysTransmitBits.GetNumBits(); ++i)
+			for (int i=0; i<pAlwaysTransmitBits.GetNumBits(); ++i)
 			{
 				if (pAlwaysTransmitBits.IsBitSet(i))
 					Msg("    %i\n", i);
@@ -655,13 +655,13 @@ struct EntityTransmitCache // Well.... Still kinda acts as a tick-based cache, t
 
 					Msg("Area %i [%i]:\n", nArea+1, pArea.nCount);
 					for (int i=0; i<pArea.nCount; ++i)
-						Msg("    %i: %s[%i]\n", i, pArea.pEntities[i]->GetClassname(), pArea.pEntities[i]->edict()->m_EdictIndex);
+						Msg("    %i: %s [%i]\n", i, pArea.pEntities[i]->GetClassname(), pArea.pEntities[i]->edict()->m_EdictIndex);
 				}
 			}
 
 			Msg("EntityCache:\n");
 			for (int i=0; i<MAX_EDICTS; ++i)
-				Msg("    %i: %s[%i]\n", i, g_pEntityCache[i] ? g_pEntityCache[i]->GetClassname() : "NULL", g_pEntityCache[i] ? g_pEntityCache[i]->edict()->m_EdictIndex : -1);
+				Msg("    %i: %s [%i]\n", i, g_pEntityCache[i] ? g_pEntityCache[i]->GetClassname() : "NULL", g_pEntityCache[i] ? g_pEntityCache[i]->edict()->m_EdictIndex : -1);
 
 			if (networking_fastcharactertransmit.GetBool())
 			{
@@ -671,7 +671,7 @@ struct EntityTransmitCache // Well.... Still kinda acts as a tick-based cache, t
 					if (!pPlayer)
 						continue;
 
-					Msg("Player - %i - %p:\n", iPlayerIndex, pPlayer);
+					Msg("Player [%i] - %p:\n", iPlayerIndex, pPlayer);
 					if (bBindGmodHandsToPlayer)
 					{
 						CBaseHandle* pHandsHandle = (CBaseHandle*)m_Hands_Offset.GetPointer(pPlayer);
@@ -763,7 +763,8 @@ struct EntityTransmitCache // Well.... Still kinda acts as a tick-based cache, t
 				if (i < (pArea.nCount - 1))
 					memmove(&pArea.pEntities[i], &pArea.pEntities[i + 1], (pArea.nCount - i - 1) * sizeof(CBaseEntity*));
 
-				pArea.pEntities[pArea.nCount--] = nullptr;
+				--pArea.nCount;
+				pArea.pEntities[pArea.nCount] = nullptr;
 				break;
 			}
 		}

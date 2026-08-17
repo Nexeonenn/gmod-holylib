@@ -35,6 +35,9 @@
 #endif
 #include "threadsaferefcountedobject.h"
 
+// GMOD
+#define SUPPORT_PACKED_STORE
+
 class CPackedStoreRefCount;
 extern CUtlSymbolTableMT* g_PathIDTable;
 class CPathIDInfo
@@ -51,32 +54,15 @@ class CPathIDInfo
 
 	public:
 		CUtlSymbol m_PathID;
-		byte test[2];
 		const char *m_pDebugPathID;
 	};
 
-enum CPathGroupName_t
-{
-	GN_DEFAULT,
-	GN_ENGINECORE,
-	GN_LUA,
-	GN_MAP,
-	GN_ADDONCONTENT,
-	GN_GMCONTENT,
-	GN_GMODCORE,
-	GN_CURRENTGAME,
-	GN_SOURCESDK,
-	GN_BADDONCONTENT,
-	GN_GAMECONTENT,
-	GN_MOUNTCFG,
-	GN_DOWNLOADS,
-	GN_FALLBACKS
-};
-
 class CPackFile;
 class CPackedStore;
+// For verifying check CBaseFileSystem::CSearchPath::CSearchPath initialization order in IDA
+// and compare to https://github.com/RaphaelIT7/obsolete-source-engine/blob/e6b95914d94d86034aee4573c3a05336e201a74a/filesystem/basefilesystem.cpp#L4611
 class CSearchPath
-	{
+{
 	public:
 					CSearchPath( void );
 					~CSearchPath( void );
@@ -89,9 +75,40 @@ class CSearchPath
 	const char* GetPathIDString() const;
 
 	int32_t m_storeId;
-	uint32_t _flag0;
+	// GMOD
+	// This influences how the searchpath is added in CBaseFileSystem::NewSearchPath (Also one of GMod's custom functions)
+	// GMod uses CPathGroupName_t as a priority system for inserts
+	// So if you want to insert a new path using PATH_ADD_TO_HEAD then if you for example use GN_LUA
+	// then it's added after GN_DEFAULT & GN_ENGINECORE but before the first GN_LUA
+	// Same goes for using PATH_ADD_TO_TAIL
+	CPathPriorityGroup_t m_PriorityGroupID;
 	CPathIDInfo *m_pPathIDInfo;
-	CPathGroupName_t m_GroupID;
+	bool m_bIsRemotePath;
+	bool m_bIsTrustedForPureServer;
+	bool m_bVPKHack; // GMOD - I assume it's related to https://garry.net/posts/vpk-search-paths
+	CUtlSymbol m_Path;
+	const char *m_pDebugPath;
+	CPackFile *m_pPackFile;
+	CPackedStore *m_pPackFile2;
+};
+
+class CSearchPathOld
+{
+	public:
+					CSearchPathOld( void );
+					~CSearchPathOld( void );
+
+	const char* GetPathString() const;
+	const char* GetDebugString() const;
+		
+	// Path ID ("game", "mod", "gamebin") accessors.
+	const CUtlSymbol& GetPathID() const;
+	const char* GetPathIDString() const;
+
+	int32_t m_storeId;
+	CPathIDInfo *m_pPathIDInfo;
+	uint32_t _flag0;
+	CPathPriorityGroup_t m_GroupID;
 	CUtlSymbol m_Path;
 	const char *m_pDebugPath;
 	CPackFile *m_pPackFile;
