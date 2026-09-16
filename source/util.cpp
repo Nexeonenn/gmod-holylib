@@ -108,7 +108,7 @@ CBasePlayer* Util::Get_Player(GarrysMod::Lua::ILuaInterface* LUA, int iStackPos,
 	}
 	
 	CBaseEntity* pEntity = Util::entitylist->GetBaseEntity(*pEntHandle);
-	if (!pEntity->IsPlayer())
+	if (!pEntity || !pEntity->IsPlayer())
 	{
 		if (bError)
 			LUA->ArgError(iStackPos, "Player entity is NULL or not a player (!?)");
@@ -213,8 +213,13 @@ CBaseEntity* Util::Get_Entity(GarrysMod::Lua::ILuaInterface* LUA, int iStackPos,
 	}
 
 	EHANDLE* pEntHandle = LUA->GetUserType<EHANDLE>(iStackPos, GarrysMod::Lua::Type::Entity);
-	if (!pEntHandle && bError)
-		LUA->ArgError(iStackPos, "Tried to use a NULL Entity!");
+	if (!pEntHandle)
+	{
+		if (bError)
+			LUA->ArgError(iStackPos, "Tried to use a NULL Entity!");
+
+		return nullptr;
+	}
 
 	CBaseEntity* pEntity = Util::entitylist->GetBaseEntity(*pEntHandle);
 	if (!pEntity && bError)
@@ -441,7 +446,7 @@ CBaseEntity* Util::GetCBaseEntityFromHandle(const CBaseHandle& pHandle)
 
 	// BUG! We cannot add server-only entities without g_pEntityList!
 	CBaseEntity* pEntity = Util::GetCBaseEntityFromIndex(pHandle.GetEntryIndex());
-	if (pEntity->GetRefEHandle() != pHandle) // Serial number may not match! A Handle can contain an outdated entity!
+	if (!pEntity || pEntity->GetRefEHandle() != pHandle) // Serial number may not match! A Handle can contain an outdated entity!
 		return nullptr;
 
 	return pEntity;
@@ -952,22 +957,6 @@ void Util::AddDetour()
 	pEntityList = g_pModuleManager.FindModuleByName("entitylist");
 
 	InitSendPropTables();
-
-	/*
-	 * IMPORTANT TODO
-	 * 
-	 * We now will run in the menu state so if we try to push an entity or so, we may push it in the wrong realm!
-	 * How will we handle multiple realms?
-	 * 
-	 * Idea: Fk menu, if there is a server realm, we'll use it. If not, we wait for one to start.
-	 *		We also could introduce a Lua Flag so that modules can register for Menu/Client realm if wanted.
-	 *		But I won't really support client. At best only menu.
-	 * 
-	 * New Idea: I'm updating everything. The goal is to support any realm & even multiple ILuaInterfaces at the same time (Preparation for lua_threaded support).
-	 */
-
-	// Load GMod version
-	// Copied this code from the crashhandler
 }
 
 void Util::RemoveDetour()

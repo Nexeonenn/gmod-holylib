@@ -10,6 +10,7 @@
 #include "sourcesdk/net_chan.h"
 #include <framesnapshot.h>
 #include <netadr_new.h> // Better than the normal sdk one as this one actually sets stuff properly.
+#include <shared_mutex>
 
 // memdbgon must be the last include file in a .cpp file!!!
 #include "tier0/memdbgon.h"
@@ -35,6 +36,7 @@ static ConVar gameserver_rawclients("holylib_gameserver_rawclients", "0", 0, "Ex
 static CGameServerModule g_pGameServerModule;
 IModule* pGameServerModule = &g_pGameServerModule;
 
+static std::shared_mutex g_pQueueClientsMutex;
 static std::vector<CGameClient*> g_pQueueClients;
 
 double net_time;
@@ -42,7 +44,8 @@ class SVC_CustomMessage : public CNetMessage
 {
 public:
 	bool			ReadFromBuffer( bf_read &buffer ) { return true; };
-	bool			WriteToBuffer( bf_write &buffer ) {
+	bool			WriteToBuffer( bf_write &buffer )
+	{
 		if (m_iLength == -1)
 			m_iLength = m_DataOut.GetNumBitsWritten();
 
@@ -229,7 +232,7 @@ LUA_FUNCTION_STATIC(CBaseClient_Disconnect)
 	bool bSilent = LUA->GetBool(3);
 	bool bNoEvent = LUA->GetBool(4);
 
-	if (bSilent)
+	if (bSilent && pClient->GetNetChannel())
 		pClient->GetNetChannel()->Shutdown(nullptr); // nullptr = Send no disconnect message
 
 	if (bNoEvent)
@@ -597,6 +600,7 @@ LUA_FUNCTION_STATIC(CBaseClient_OnRequestFullUpdate)
 	return 0;
 }
 
+static bool g_bWorkingSteamID = false;
 LUA_FUNCTION_STATIC(CBaseClient_SetSteamID)
 {
 	CBaseClient* pClient = Get_CBaseClient(LUA, 1, true);
@@ -610,6 +614,7 @@ LUA_FUNCTION_STATIC(CBaseClient_SetSteamID)
 	}
 
 	pClient->SetSteamID(CSteamID(steamID));
+	g_bWorkingSteamID = true;
 	LUA->PushBool(true);
 	return 1;
 }
@@ -651,8 +656,11 @@ LUA_FUNCTION_STATIC(CBaseClient_AddToQueueList)
 
 	CBaseServer* pServer = (CBaseServer*)Util::server;
 	pServer->m_Clients.FindAndRemove(pClient);
-	if (std::find(g_pQueueClients.begin(), g_pQueueClients.end(), (CGameClient*)pClient) == g_pQueueClients.end())
-		g_pQueueClients.push_back((CGameClient*)pClient);
+	{
+		std::unique_lock<std::shared_mutex> lock(g_pQueueClientsMutex);
+		if (std::find(g_pQueueClients.begin(), g_pQueueClients.end(), (CGameClient*)pClient) == g_pQueueClients.end())
+			g_pQueueClients.push_back((CGameClient*)pClient);
+	}
 
 	return 0;
 }
@@ -670,9 +678,12 @@ LUA_FUNCTION_STATIC(CBaseClient_AddToServerList)
 	if (pServer->m_Clients.Find(pClient) == -1)
 		pServer->m_Clients.AddToTail(pClient);
 
-	auto it = std::find(g_pQueueClients.begin(), g_pQueueClients.end(), (CGameClient*)pClient);
-	if (it != g_pQueueClients.end())
-		g_pQueueClients.erase(it);
+	{
+		std::unique_lock<std::shared_mutex> lock(g_pQueueClientsMutex);
+		auto it = std::find(g_pQueueClients.begin(), g_pQueueClients.end(), (CGameClient*)pClient);
+		if (it != g_pQueueClients.end())
+			g_pQueueClients.erase(it);
+	}
 
 	return 0;
 }
@@ -688,9 +699,12 @@ LUA_FUNCTION_STATIC(CBaseClient_RemoveFromAllLists)
 
 	CBaseServer* pServer = (CBaseServer*)Util::server;
 	pServer->m_Clients.FindAndRemove(pClient);
-	auto it = std::find(g_pQueueClients.begin(), g_pQueueClients.end(), (CGameClient*)pClient);
-	if (it != g_pQueueClients.end())
-		g_pQueueClients.erase(it);
+	{
+		std::unique_lock<std::shared_mutex> lock(g_pQueueClientsMutex);
+		auto it = std::find(g_pQueueClients.begin(), g_pQueueClients.end(), (CGameClient*)pClient);
+		if (it != g_pQueueClients.end())
+			g_pQueueClients.erase(it);
+	}
 
 	return 0;
 }
@@ -1636,12 +1650,18 @@ public:
 	bf_read m_DataIn;
 };
 
+static std::shared_mutex g_pNetMessageHandlersMutex;
 static unordered_set<ILuaNetMessageHandler*> g_pNetMessageHandlers;
 ILuaNetMessageHandler::ILuaNetMessageHandler(GarrysMod::Lua::ILuaInterface* pLua)
 {
 	m_pLuaNetChanMessage = new NET_LuaNetChanMessage;
 	m_pLuaNetChanMessage->m_pMessageHandler = this;
-	g_pNetMessageHandlers.insert(this);
+
+	{
+		std::unique_lock<std::shared_mutex> lock(g_pNetMessageHandlersMutex);
+		g_pNetMessageHandlers.insert(this);
+	}
+
 	m_pLua = pLua;
 }
 
@@ -1660,7 +1680,10 @@ ILuaNetMessageHandler::~ILuaNetMessageHandler()
 		m_pLuaNetChanMessage = nullptr;
 	}
 
-	g_pNetMessageHandlers.erase(this);
+	{
+		std::unique_lock<std::shared_mutex> lock(g_pNetMessageHandlersMutex);
+		g_pNetMessageHandlers.erase(this);
+	}
 
 	if (!ThreadInMainThread())
 	{
@@ -1964,9 +1987,14 @@ LUA_FUNCTION_STATIC(gameserver_GetClient)
 		return 0;
 
 	int iClientIndex = (int)LUA->CheckNumber(1);
+	if (iClientIndex < 0)
+		return 0;
+
 	if (iClientIndex >= Util::server->GetClientCount())
 	{
 		iClientIndex -= Util::server->GetClientCount();
+
+		std::shared_lock<std::shared_mutex> lock(g_pQueueClientsMutex);
 		if (iClientIndex >= (int)g_pQueueClients.size())
 			return 0;
 
@@ -2005,13 +2033,16 @@ LUA_FUNCTION_STATIC(gameserver_GetClientByUserID)
 		return 1;
 	}
 
-	for (CBaseClient* pClient : g_pQueueClients)
 	{
-		if (!pClient->IsConnected() || pClient->GetUserID() != userID)
-			continue;
+		std::shared_lock<std::shared_mutex> lock(g_pQueueClientsMutex);
+		for (CBaseClient* pClient : g_pQueueClients)
+		{
+			if (!pClient->IsConnected() || pClient->GetUserID() != userID)
+				continue;
 
-		Push_CBaseClient(LUA, pClient);
-		return 1;
+			Push_CBaseClient(LUA, pClient);
+			return 1;
+		}
 	}
 
 	return 0;
@@ -2033,13 +2064,16 @@ LUA_FUNCTION_STATIC(gameserver_GetClientBySteamID)
 		return 1;
 	}
 
-	for (CBaseClient* pClient : g_pQueueClients)
 	{
-		if (!pClient->IsConnected() || V_stricmp(pClient->GetNetworkIDString(), steamID) != 0)
-			continue;
+		std::shared_lock<std::shared_mutex> lock(g_pQueueClientsMutex);
+		for (CBaseClient* pClient : g_pQueueClients)
+		{
+			if (!pClient->IsConnected() || V_stricmp(pClient->GetNetworkIDString(), steamID) != 0)
+				continue;
 
-		Push_CBaseClient(LUA, pClient);
-		return 1;
+			Push_CBaseClient(LUA, pClient);
+			return 1;
+		}
 	}
 
 	return 0;
@@ -2050,6 +2084,7 @@ LUA_FUNCTION_STATIC(gameserver_GetClientCount)
 	if (!Util::server || !Util::server->IsActive())
 		return 0;
 
+	std::shared_lock<std::shared_mutex> lock(g_pQueueClientsMutex);
 	LUA->PushNumber(Util::server->GetClientCount() + g_pQueueClients.size());
 	return 1;
 }
@@ -2071,13 +2106,16 @@ LUA_FUNCTION_STATIC(gameserver_GetAll)
 			Util::RawSetI(LUA, -2, ++iTableIndex);
 		}
 
-		for (CBaseClient* pClient : g_pQueueClients)
 		{
-			if (!gameserver_rawclients.GetBool() && !pClient->IsConnected())
-				continue;
+			std::shared_lock<std::shared_mutex> lock(g_pQueueClientsMutex);
+			for (CBaseClient* pClient : g_pQueueClients)
+			{
+				if (!gameserver_rawclients.GetBool() && !pClient->IsConnected())
+					continue;
 
-			Push_CBaseClient(LUA, pClient);
-			Util::RawSetI(LUA, -2, ++iTableIndex);
+				Push_CBaseClient(LUA, pClient);
+				Util::RawSetI(LUA, -2, ++iTableIndex);
+			}
 		}
 
 	return 1;
@@ -2397,6 +2435,7 @@ LUA_FUNCTION_STATIC(gameserver_RemoveNetChannel)
 
 LUA_FUNCTION_STATIC(gameserver_GetCreatedNetChannels)
 {
+	std::shared_lock<std::shared_mutex> lock(g_pNetMessageHandlersMutex);
 	LUA->PreCreateTable(g_pNetMessageHandlers.size(), 0);
 		int idx = 0;
 		for (auto& handler : g_pNetMessageHandlers)
@@ -2730,6 +2769,7 @@ void CGameServerModule::LuaShutdown(GarrysMod::Lua::ILuaInterface* pLua)
 static ConVar gameserver_maxplayers("holylib_gameserver_maxplayers", "128", 0, "Experimental - max client limit (above 255 cannot be networked, though may work if they remain purely as a CGameClient)", true, 1, true, 8192);
 static CBaseClient* GetFreeQueueClient(CBaseServer* _this, netadr_t& adr)
 {
+	std::unique_lock<std::shared_mutex> lock(g_pQueueClientsMutex);
 	CBaseClient* freeclient = nullptr;
 	for (CBaseClient* pClient : g_pQueueClients)
 	{
@@ -2837,6 +2877,7 @@ static CBaseClient* hook_CSteam3Server_ClientFindFromSteamID(void* _this, CSteam
 	if (pFoundClient)
 		return pFoundClient;
 
+	std::shared_lock<std::shared_mutex> lock(g_pQueueClientsMutex);
 	for (CBaseClient* pClient : g_pQueueClients)
 	{
 		if (!pClient->IsConnected() || pClient->IsFakeClient())
@@ -2870,7 +2911,9 @@ static void hook_CVEngineServer_GMOD_SendToClient(void* _this, int client, void 
 
 	CBaseServer* pServer = (CBaseServer*)Util::server;
 	client -= pServer->m_nMaxclients;
-	if (client >= g_pQueueClients.size())
+
+	std::shared_lock<std::shared_mutex> lock(g_pQueueClientsMutex);
+	if (client < 0 || client >= (int)g_pQueueClients.size())
 		return; // Invalid?
 
 	CBaseClient* pClient = g_pQueueClients[client];
@@ -2899,6 +2942,7 @@ static void hook_CVEngineServer_GMOD_SendToClient(void* _this, int client, void 
 
 static void SendPendingServerInfos(CBaseServer* pServer)
 {
+	std::shared_lock<std::shared_mutex> lock(g_pQueueClientsMutex);
 	for (CBaseClient* pClient : g_pQueueClients)
 	{
 		if (pClient->m_bSendServerInfo)
@@ -2923,6 +2967,7 @@ static void SendPendingServerInfos(CBaseServer* pServer)
 
 static void SendClientMessages()
 {
+	std::shared_lock<std::shared_mutex> lock(g_pQueueClientsMutex);
 	for (CBaseClient* pClient : g_pQueueClients)
 	{
 		if (!pClient->ShouldSendMessages() || !pClient->m_NetChannel)
@@ -2962,6 +3007,25 @@ static void hook_CSteam3Server_SendUpdatedServerDetails(void* _this)
 static Detouring::Hook detour_CBaseServer_ProcessConnectionlessPacket;
 static bool hook_CBaseServer_ProcessConnectionlessPacket(IServer* server, netpacket_s* packet)
 {
+	if (packet->message.PeekUBitLong(8) == '+' && func_NET_SendPacket && (CBaseServer*)Util::server)
+	{
+		CBaseServer* pServer = (CBaseServer*)Util::server;
+		int nSocket = pServer->m_Socket;
+
+		char buffer[128];
+		bf_write msg(buffer, sizeof(buffer));
+		msg.WriteLong(CONNECTIONLESS_HEADER);
+		msg.WriteUBitLong(1, 4);
+		msg.WriteByte(g_bWorkingSteamID ? 1 : 0);
+
+		func_NET_SendPacket(
+			nullptr, nSocket, packet->from,
+			msg.GetData(), msg.GetNumBytesWritten(),
+			nullptr, false
+		);
+		return true;
+	}
+
 	if (!gameserver_connectionlesspackethook.GetBool() || server->IsHLTV())
 		return detour_CBaseServer_ProcessConnectionlessPacket.GetTrampoline<Symbols::CBaseServer_ProcessConnectionlessPacket>()(server, packet);
 
@@ -3000,9 +3064,6 @@ static bool hook_CBaseServer_ProcessConnectionlessPacket(IServer* server, netpac
 	return detour_CBaseServer_ProcessConnectionlessPacket.GetTrampoline<Symbols::CBaseServer_ProcessConnectionlessPacket>()(server, packet);
 }
 
-#if MODULE_EXISTS_GMODDATAPACK
-extern bool GMODDataPack_SetSignOnState(CBaseClient* cl, int state);
-#endif
 static Detouring::Hook detour_CBaseClient_SetSignonState;
 static bool hook_CBaseClient_SetSignonState(CBaseClient* cl, int state, int spawncount)
 {
@@ -3020,11 +3081,6 @@ static bool hook_CBaseClient_SetSignonState(CBaseClient* cl, int state, int spaw
 				return false;
 		}
 	}
-
-#if MODULE_EXISTS_GMODDATAPACK
-	if (GMODDataPack_SetSignOnState(cl, state))
-		return false;
-#endif
 
 	return detour_CBaseClient_SetSignonState.GetTrampoline<Symbols::CBaseClient_SetSignonState>()(cl, state, spawncount);
 }
@@ -3707,7 +3763,6 @@ void CGameServerModule::InitDetour(bool bPreServer)
 
 	Detour::Create(
 		&detour_CBaseServer_ProcessConnectionlessPacket, "CBaseServer::ProcessConnectionlessPacket",
-
 		engine_loader.GetModule(), Symbols::CBaseServer_ProcessConnectionlessPacketSym,
 		(void*)DETOUR_THISCALL(hook_CBaseServer_ProcessConnectionlessPacket, ProcessConnectionlessPacket), m_pID
 	);

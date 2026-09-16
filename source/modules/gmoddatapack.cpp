@@ -30,7 +30,6 @@ public:
 	void LevelShutdown() override;
 	void Think(bool bSimulating) override;
 	void InitDetour(bool bPreServer) override;
-	void OnClientDisconnect(CBaseClient* pClient) override;
 	const char* Name() override { return "gmoddatapack"; };
 	int Compatibility() override { return LINUX32 | LINUX64 | WINDOWS32 | WINDOWS64; };
 	bool IsEnabledByDefault() override { return false; }; // ToDo: Figure out what inside of here is behaving very randomly
@@ -38,7 +37,6 @@ public:
 
 static ConVar gmoddatapack_removeserverif("holylib_gmoddatapack_removeserverif", "0", 0, "If enabled, \"if SERVER then\" code blocks are removed from client files");
 static ConVar gmoddatapack_removecomments("holylib_gmoddatapack_removecomments", "0", 0, "If enabled, comments are removed from client files");
-static ConVar gmoddatapack_fastnetworking("holylib_gmoddatapack_fastnetworking", "0", 0, "(Very Experimental) If enabled, it'll do funky stuff to the networking");
 
 static CGModDataPackModule g_pGModDataPackModule;
 IModule* pGModDataPackModule = &g_pGModDataPackModule;
@@ -119,11 +117,10 @@ static std::vector<Token> TokenizeContent(const std::string& content)
 {
 	std::vector<Token> tokens;
 
-	size_t scope = 0;
 	size_t i = 0;
 	while (i < content.size())
 	{
-		char c = content[i];
+		unsigned char c = (unsigned char)content[i];
 		if (c == '\n')
 		{
 			tokens.push_back({TK_LINEEND, std::string(1, c), true});
@@ -365,7 +362,7 @@ static std::vector<Token> TokenizeContent(const std::string& content)
 		if (std::isdigit(c))
 		{
 			size_t start = i;
-			while (i < content.size() && std::isdigit(content[i]))
+			while (i < content.size() && std::isdigit((unsigned char)content[i]))
 				i++;
 
 			std::string strWord = content.substr(start, i - start);
@@ -376,7 +373,7 @@ static std::vector<Token> TokenizeContent(const std::string& content)
 		if (std::isalpha(c) || c == '_')
 		{
 			size_t start = i;
-			while (i < content.size() && (std::isalnum(content[i]) || content[i]=='_'))
+			while (i < content.size() && (std::isalnum((unsigned char)content[i]) || content[i]=='_'))
 				i++;
 
 			std::string strWord = content.substr(start, i - start);
@@ -454,8 +451,8 @@ static bool CanServerConditionBeRemoved(const std::vector<Token> &tokens, size_t
 	pScopes[0].start = start;
 	pScopeIDs.push_back(0);
 
-	int lastNonEmpty = 0; // To avoid backtracking! (Now it just is a very small save in backtracking I guess)
-	while (tokens[start].type != TK_THEN && tokens[start].type != TK_DO && start < tokens.size())
+	size_t lastNonEmpty = 0; // To avoid backtracking! (Now it just is a very small save in backtracking I guess)
+	while (start < tokens.size() && tokens[start].type != TK_THEN && tokens[start].type != TK_DO)
 	{
 		if (!tokens[start].isSpace && tokens[start].type != TK_PARENTHESIS)
 			pScopes[pScopeIDs.back()].isEmpty = false;
@@ -499,6 +496,14 @@ static bool CanServerConditionBeRemoved(const std::vector<Token> &tokens, size_t
 				}
 
 				pScopeIDs.pop_back();
+				if (pScopeIDs.empty())
+				{
+					if (g_pGModDataPackModule.InDebug())
+						Warning(PROJECT_NAME " - GModDataPack: How did we pop too many scopes???\n");
+
+					return false;
+				}
+
 				pScopes[pScopeIDs.back()].isServer[pScopes[pScopeIDs.back()].isServer.size()-1] = wasServer;
 			}
 		}
@@ -580,6 +585,9 @@ static size_t RemoveServerScoped(size_t j, std::vector<Token> &tokens, std::stri
 {
 	bool hasLineBreaks = false;
 	size_t i = RemoveScoped(j, tokens, ss, tok, hasLineBreaks);
+
+	if (i >= tokens.size())
+		return i;
 
 	if (tokens[i].type == TK_ELSEIF)
 		tokens[i].content = tok == TK_IF ? "if" : "elseif";
@@ -831,7 +839,14 @@ public:
 			return;
 		}
 
-		LuaPackEntry& pEntry = m_pLuaFileCache[fileID];
+		LuaPackEntry* pPackEntry = GetPackEntry(fileID);
+		if (!pPackEntry)
+		{
+			Warning(PROJECT_NAME " - gmoddatapack: fileID %i for \"%s\" is out of range of our cache!\n", fileID, fileName.c_str());
+			return;
+		}
+
+		LuaPackEntry& pEntry = *pPackEntry;
 		std::lock_guard<std::shared_mutex> lock(pEntry.mutex);
 		bool bRemoveServerCode = gmoddatapack_removeserverif.GetBool();
 		bool bRemoveComments = gmoddatapack_removecomments.GetBool();
@@ -937,92 +952,9 @@ public:
 		return &m_pLuaFileCache[fileID];
 	}
 
-	static constexpr size_t MIN_TRANSFER_RATE = 1024 * 64; // If we cannot achieve this speed we just let GMod handle it since it'll be faster at that point
-	static constexpr size_t MAX_TRANSFER_RATE = 1024 * 512;
-	struct PlayerQueue
-	{
-		std::vector<int> pQueue;
-		size_t sentFiles = 0; // This connection count (Since they are reconnected each time)
-		size_t requestCount = 0; // Total file count of this attempt
-		size_t previousCount = 0; // Total file count of this attempt
-		size_t totalSentFiles = 0; // Total sent count
-		size_t targetRate = MAX_TRANSFER_RATE; // Default rate which we will attempt to hit (and go a bit over) - this rate has no effect when useReliable = true
-		// If we sent anything unreliable at any point through this attempt we must reconnect at the end!
-		// I hate this but GMod doesn't provide a way to request which files are left & Rubat never answered in the binary-modules channel :(
-		bool usedUnreliable = false;
-		bool usedReliable = false; // We don't need to reconnect them once were done since we used the reliable stream
-		bool useReliable = false; // We may force reliable networking if the loss through unreliable is too great
-		float successRate = -1.0f;
-		double reconnectTime = -1;
-
-		void Clear()
-		{
-			pQueue.clear();
-			sentFiles = 0;
-			requestCount = 0;
-			previousCount = 0;
-			totalSentFiles = 0;
-			targetRate = MAX_TRANSFER_RATE;
-			usedUnreliable = false;
-			usedReliable = false;
-			useReliable = false;
-			reconnectTime = -1;
-			successRate = -1.0f;
-		}
-
-		// Player was reconnected... prepare for a new attempt
-		void Reconnect()
-		{
-			reconnectTime = -1;
-			successRate = -1.0f;
-			useReliable = false,
-			usedReliable = false;
-			usedUnreliable = false;
-			previousCount = requestCount;
-			requestCount = 0;
-		}
-
-		// Before sending we always recalculate
-		void RecalculateRate()
-		{
-			if (successRate != -1.0f)
-				return;
-
-			successRate = ((float)requestCount / (float)previousCount);
-			if (successRate > 0.9f)
-			{
-				// We always have some loss, to avoid issues we sent the last few through reliable to avoid wasting time with reconnecting just to find the few lost files
-				if (requestCount < 50)
-					useReliable = true;
-
-				return; // No adjustment needed
-			}
-
-			// If we got only a few files left it's not worth with this success rate to keep using the unrelibale method
-			if (requestCount < 150)
-			{
-				useReliable = true;
-				return;
-			}
-
-			// GG, loss is too high
-			if (targetRate == MIN_TRANSFER_RATE)
-			{
-				useReliable = true;
-				return;
-			}
-
-			targetRate = targetRate * successRate;
-			if (targetRate < MIN_TRANSFER_RATE)
-				targetRate = MIN_TRANSFER_RATE;
-		}
-	};
-
 public:
 	static constexpr int MAX_LUA_FILES = 1 << 13;
 	LuaPackEntry m_pLuaFileCache[MAX_LUA_FILES];
-
-	PlayerQueue m_pPlayerQueue[ABSOLUTE_PLAYER_LIMIT];
 
 	std::vector<int> m_pCompressQueue;
 	std::mutex m_pCompressQueueMutex;
@@ -1079,11 +1011,14 @@ static SIMPLETHREAD_RETURNVALUE WorkerThread(void* pData)
 				if (g_pLuaDataPack.m_pWorkerThreadState.load() != ThreadState::STATE_RUNNING)
 					break;
 
-				LuaDataPack::LuaPackEntry* pEntry = &g_pLuaDataPack.m_pLuaFileCache[fileID];
+				LuaDataPack::LuaPackEntry* pEntry = g_pLuaDataPack.GetPackEntry(fileID);
+				if (!pEntry)
+					continue;
+
 				std::lock_guard<std::shared_mutex> lock(pEntry->mutex);
 				if (pEntry->IsContentReady()) // Already done? Either we did it, or the main thread.
 					continue;
-				
+
 				g_pLuaDataPack.ProcessContent(pEntry, fileID);
 			}
 		}
@@ -1094,11 +1029,14 @@ static SIMPLETHREAD_RETURNVALUE WorkerThread(void* pData)
 			if (g_pLuaDataPack.m_pWorkerThreadState.load() != ThreadState::STATE_RUNNING)
 				break;
 
-			LuaDataPack::LuaPackEntry* pEntry = &g_pLuaDataPack.m_pLuaFileCache[fileID];
+			LuaDataPack::LuaPackEntry* pEntry = g_pLuaDataPack.GetPackEntry(fileID);
+			if (!pEntry)
+				continue;
+
 			std::lock_guard<std::shared_mutex> lock(pEntry->mutex);
 			if (pEntry->IsReady() || !pEntry->IsContentReady()) // Already done? Either we did it, or the main thread.
 				continue;
-				
+
 			g_pLuaDataPack.CompressFile(pEntry, fileID);
 		}
 	}
@@ -1197,19 +1135,8 @@ static void hook_GModDataPack_AddOrUpdateFile(GModDataPack* pDataPack, GarrysMod
 	// The SHA256 is generated by GModDataPack::GetHashFromString
 }
 
-static void SendLuaFile(int clientIdx, int fileID, LuaDataPack::LuaPackEntry* pEntry, bool bNoFastTransmit = false)
+static void SendLuaFile(int clientIdx, int fileID, LuaDataPack::LuaPackEntry* pEntry)
 {
-	if (!bNoFastTransmit && gmoddatapack_fastnetworking.GetBool() && clientIdx < ABSOLUTE_PLAYER_LIMIT)
-	{
-		if (g_pGModDataPackModule.InDebug())
-			Msg(PROJECT_NAME " - gmoddatapack: Client requested fileID %i! adding to queue...\n", fileID);
-
-		LuaDataPack::PlayerQueue& pQueue = g_pLuaDataPack.m_pPlayerQueue[clientIdx];
-		pQueue.pQueue.push_back(fileID);
-		++pQueue.requestCount;
-		return;
-	}
-
 	char pBuffer[1 << 16];
 	bf_write msg(pBuffer, sizeof(pBuffer));
 
@@ -1285,7 +1212,7 @@ static void hook_GModDataPack_SendFileToClient(GModDataPack* pDataPack, int clie
 
 LUA_FUNCTION_STATIC(gmoddatapack_StripCode)
 {
-	size_t nLength = -1;
+	size_t nLength;
 	const char* pContent = Util::CheckLString(LUA, 1, &nLength);
 	bool bRemoveServerCode = Util::CheckBoolOpt(LUA, 2, gmoddatapack_removeserverif.GetBool());
 	bool bRemoveComments = Util::CheckBoolOpt(LUA, 3, gmoddatapack_removecomments.GetBool());
@@ -1395,162 +1322,30 @@ LUA_FUNCTION_STATIC(gmoddatapack_MarkAsTokenizeThread)
 	return 0;
 }
 
-static bool SendFileThroughUnreliable(int clientIdx, LuaDataPack::LuaPackEntry* pEntry, int fileID)
-{
-	if (!pEntry->IsReady())
-	{
-		DevMsg(PROJECT_NAME " - gmoddatapack: File \"%i\" isn't yet ready to be sent! Compressing on main thread...\n", fileID);
-		if (!pEntry->IsContentReady())
-			g_pLuaDataPack.ProcessContent(pEntry, fileID);
-
-		if (!pEntry->IsContentReady() || !g_pLuaDataPack.CompressFile(pEntry, fileID))
-			return false;
-	}
-
-	// Idea: What if... we simply nuke the unreliable stream to send it?
-	// The client wouldn't really complain if we send both reliable and unreliable... right?
-	// Also, I am like 99% sure we can just send RequestLuaFiles once we assumed we sent everything and the client will tell us what is missing
-
-	CBaseClient* pClient = Util::GetClientByIndex(clientIdx);
-	if (pClient && pClient->GetNetChannel())
-	{
-		static constexpr int BUFFER_SIZE = (1 << 16) * 8;
-		CNetChan* pChannel = (CNetChan*)pClient->GetNetChannel();
-
-		int totalLength = 1 + 2 + pEntry->compressed.GetWritten();
-		if (pChannel->m_StreamUnreliable.GetNumBytesLeft() < totalLength)
-			pChannel->Transmit(false); // We got no space? Let's make some
-
-		pChannel->m_StreamUnreliable.WriteUBitLong(svc_GMod_ServerToClient, NETMSG_TYPE_BITS);
-		pChannel->m_StreamUnreliable.WriteUBitLong(totalLength * 8, 20);
-		pChannel->m_StreamUnreliable.WriteByte(GarrysMod::NetworkMessage::LuaFileDownload);
-		pChannel->m_StreamUnreliable.WriteUBitLong(fileID, 16);
-		pChannel->m_StreamUnreliable.WriteBytes(pEntry->compressed.GetBase(), pEntry->compressed.GetWritten());
-
-		if (g_pCVar)
-		{
-			// This is like the most common convar to limit us when sending out a lot of data.
-			// So let's raise it and take the speed :hehe:
-			ConVar* pVar = g_pCVar->FindVar("net_splitrate");
-			if (pVar && V_stricmp(pVar->GetString(), pVar->GetDefault()) == 0)
-				pVar->SetValue(100); // 100 was too much o.o let's lower it, I'm not trying to send 20MB all at once :skull: - nevermind, works now
-		}
-
-		if (g_pGModDataPackModule.InDebug())
-			Msg(PROJECT_NAME " - gmoddatapack: Sent FileID %i though unreliable stream!\n", fileID);
-
-		pChannel->Transmit(false);
-		pChannel->m_fClearTime = pChannel->GetTime() + 10; // Screw you! We don't want to proceed into the SignOnState before were done!
-	}
-
-	return true;
-}
-
-void CGModDataPackModule::OnClientDisconnect(CBaseClient* pClient)
-{
-	int slot = pClient->GetPlayerSlot();
-	if (slot < 0 || slot >= ABSOLUTE_PLAYER_LIMIT)
-		return;
-
-	g_pLuaDataPack.m_pPlayerQueue[slot].Clear();
-}
-
 static double g_nLastSend = 0;
 void CGModDataPackModule::Think(bool bSimulating)
 {
+	// We do this since SetStringUserData isn't thread safe and may crash in very rare race conditions
+	std::lock_guard<std::mutex> lock(g_pLuaDataPack.m_pStringTableUpdateQueueMutex);
+	for (int fileID : g_pLuaDataPack.m_pStringTableUpdateQueue)
 	{
-		// We do this since SetStringUserData isn't thread safe and may crash in very rare race conditions
-		std::lock_guard<std::mutex> lock(g_pLuaDataPack.m_pStringTableUpdateQueueMutex);
-		for (int fileID : g_pLuaDataPack.m_pStringTableUpdateQueue)
-		{
-			LuaDataPack::LuaPackEntry* pEntry = g_pLuaDataPack.GetPackEntry(fileID);
-			std::lock_guard<std::shared_mutex> entryLock(pEntry->mutex);
-
-			std::vector<unsigned char> pHash = HashString(pEntry->content.c_str(), pEntry->content.length() + 1);
-			g_pDataPack->m_pClientLuaFiles->SetStringUserData(fileID, pHash.size(), pHash.data());
-		}
-		g_pLuaDataPack.m_pStringTableUpdateQueue.clear();
-	}
-
-	double currentTime = Util::engineserver->Time();
-	if (currentTime < (g_nLastSend + 0.05))
-		return;
-
-	g_nLastSend = currentTime;
-	for (int i=0; i<ABSOLUTE_PLAYER_LIMIT; ++i)
-	{
-		LuaDataPack::PlayerQueue& pPlayerInfo = g_pLuaDataPack.m_pPlayerQueue[i];
-		if (pPlayerInfo.reconnectTime != -1 && currentTime > pPlayerInfo.reconnectTime)
-		{
-			CBaseClient* pClient = Util::GetClientByIndex(i);
-			if (pClient && pClient->GetNetChannel())
-				pClient->Reconnect();
-
-			pPlayerInfo.Reconnect();
-		}
-
-		if (pPlayerInfo.pQueue.empty())
+		LuaDataPack::LuaPackEntry* pEntry = g_pLuaDataPack.GetPackEntry(fileID);
+		if (!pEntry)
 			continue;
 
-		pPlayerInfo.RecalculateRate();
-		// As the name SendFileThroughUnreliable implies, it's not reliable, when only a few files are left, it's more efficient to send them though the slower reliable stream.
-		if (pPlayerInfo.useReliable && !pPlayerInfo.usedUnreliable)
-		{
-			for (int fileID : pPlayerInfo.pQueue)
-			{
-				LuaDataPack::LuaPackEntry* pEntry = g_pLuaDataPack.GetPackEntry(fileID);
-				std::lock_guard<std::shared_mutex> lock(pEntry->mutex);
+		std::lock_guard<std::shared_mutex> entryLock(pEntry->mutex);
 
-				++pPlayerInfo.sentFiles;
-				++pPlayerInfo.totalSentFiles;
-				SendLuaFile(i, fileID, pEntry, true);
-			}
-			pPlayerInfo.pQueue.clear();
-			pPlayerInfo.usedReliable = true;
-		} else {
-			pPlayerInfo.usedUnreliable = true;
-			size_t networkedSize = 0;
-			while (networkedSize < pPlayerInfo.targetRate)
-			{
-				int fileID = pPlayerInfo.pQueue.back();
-				pPlayerInfo.pQueue.pop_back();
-
-				LuaDataPack::LuaPackEntry* pEntry = g_pLuaDataPack.GetPackEntry(fileID);
-				std::lock_guard<std::shared_mutex> lock(pEntry->mutex);
-
-				// We "could" try to do some work and see if any file would fit next but meeh, not worth it.
-				if (SendFileThroughUnreliable(i, pEntry, fileID))
-				{
-					networkedSize += pEntry->compressed.GetWritten();
-					++pPlayerInfo.sentFiles;
-					++pPlayerInfo.totalSentFiles;
-				}
-
-				if (pPlayerInfo.pQueue.empty())
-					break;
-			}
-
-			CBaseClient* pClient = Util::GetClientByIndex(i);
-			if (pClient && pClient->GetNetChannel())
-			{
-				CNetChan* pChannel = (CNetChan*)pClient->GetNetChannel();
-				pChannel->ProcessStream();
-
-				if (pPlayerInfo.pQueue.empty() && !pPlayerInfo.usedReliable)
-				{
-					//char pBuffer[1 << 13];
-					//bf_write msg(pBuffer, sizeof(pBuffer));
-					//msg.WriteByte(GarrysMod::NetworkMessage::RequestLuaFiles);
-					//Util::engineserver->GMOD_SendToClient( i, msg.GetData(), msg.GetNumBitsWritten() );
-
-					pPlayerInfo.reconnectTime = currentTime + 1; // Give some time for processing
-					DevMsg(PROJECT_NAME " - gmoddatapack: Marked for reconnect! (%s)\n", pClient->GetClientName());
-				}
-			}
-		}
+		std::vector<unsigned char> pHash = HashString(pEntry->content.c_str(), pEntry->content.length() + 1);
+		g_pDataPack->m_pClientLuaFiles->SetStringUserData(fileID, pHash.size(), pHash.data());
 	}
+
+	g_pLuaDataPack.m_pStringTableUpdateQueue.clear();
 }
 
+/*
+RaphaelIT7:
+This is no longer needed as like Gmod we just flood the reliable stream
+But I still feel like GMod should've been doing something like this :/
 bool GMODDataPack_SetSignOnState(CBaseClient* cl, int state)
 {
 	int slot = cl->GetPlayerSlot();
@@ -1561,7 +1356,7 @@ bool GMODDataPack_SetSignOnState(CBaseClient* cl, int state)
 		return false;
 
 	return !g_pLuaDataPack.m_pPlayerQueue[slot].pQueue.empty();
-}
+}*/
 
 #if SYSTEM_WINDOWS
 DETOUR_THISCALL_START()

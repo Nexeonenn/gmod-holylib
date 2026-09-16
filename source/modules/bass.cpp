@@ -1,6 +1,4 @@
 #include "LuaInterface.h"
-#include "detours.h"
-#include "module.h"
 #include "lua.h"
 #include "sourcesdk/cgmod_audio.h"
 #include "edict.h"
@@ -422,7 +420,7 @@ LUA_FUNCTION_STATIC(IGModAudioChannel_WriteToDisk)
 LUA_FUNCTION_STATIC(IGModAudioChannel_Update)
 {
 	IGModAudioChannel* channel = Get_IGModAudioChannel(LUA, 1, true);
-	channel->Update(LUA->CheckNumber(2));
+	channel->Update((unsigned long)LUA->CheckNumber(2));
 
 	return 0;
 }
@@ -525,10 +523,6 @@ LUA_FUNCTION_STATIC(IGModAudioChannel_GetChannelData)
 {
 	IGModAudioChannel* channel = Get_IGModAudioChannel(LUA, 1, true);
 	unsigned short nSize = (unsigned short)LUA->CheckNumber(2);
-
-	// Max 64kb!
-	if (nSize > USHRT_MAX)
-		nSize = USHRT_MAX;
 
 	void* pBuffer = alloca(nSize);
 	unsigned long nLength = channel->GetChannelData(pBuffer, nSize | BASS_DATA_FLOAT);
@@ -755,7 +749,7 @@ LUA_FUNCTION_STATIC(IGModAudioChannel_FeedEmpty)
 
 	int nSamples = (sampleRate * durationMs) / 1000;
 	int nBytes = nSamples * channels * sizeof(short);
-	if (nBytes > 50000) // More than 50kb stackalloc? Hmmm... what are you doing...
+	if (nBytes <= 0 || nBytes > 50000) // More than 50kb stackalloc? Hmmm... what are you doing...
 	{
 		LUA->PushBool(false);
 		LUA->PushNil();
@@ -764,7 +758,7 @@ LUA_FUNCTION_STATIC(IGModAudioChannel_FeedEmpty)
 
 	char* pSilence = (char*)_alloca(nBytes);
 	memset(pSilence, 0, nBytes);
-	
+
 	const char* pError = nullptr;
 	channel->WriteData(pSilence, nBytes, &pError);
 	LUA->PushBool(pError == nullptr);
@@ -1172,7 +1166,7 @@ LUA_FUNCTION_STATIC(IGModAudioChannelEncoder_FeedEmpty)
 
 	int nSamples = (sampleRate * durationMs) / 1000;
 	int nBytes = nSamples * channels * sizeof(short);
-	if (nBytes > 50000) // More than 50kb stackalloc? Hmmm... what are you doing...
+	if (nBytes <= 0 || nBytes > 50000) // More than 50kb stackalloc? Hmmm... what are you doing...
 	{
 		LUA->PushBool(false);
 		return 1;

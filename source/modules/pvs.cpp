@@ -354,7 +354,7 @@ LUA_FUNCTION_STATIC(pvs_CheckAreasConnected)
 		LUA->ArgError(1, "Bogus area1 value!");
 
 	if (area2 < 0 || area2 >= MAX_MAP_AREAS)
-		LUA->ArgError(1, "Bogus area2 value!");
+		LUA->ArgError(2, "Bogus area2 value!");
 
 	LUA->PushBool(Util::engineserver->CheckAreasConnected(area1, area2));
 	return 1;
@@ -892,8 +892,7 @@ LUA_FUNCTION_STATIC(pvs_TestPVS)
 		}
 #endif
 	} else {
-		LUA->CheckType(2, GarrysMod::Lua::Type::Entity);
-		CBaseEntity* ent = Util::Get_Entity(LUA, 2, false);
+		CBaseEntity* ent = Util::Get_Entity(LUA, 2, true);
 
 		LUA->PushBool(TestPVS(pVisCluster.get(), ent->GetAbsOrigin()));
 	}
@@ -985,7 +984,6 @@ LUA_FUNCTION_STATIC(pvs_PreventTransmitAllExcept)
 			pEntities.Set(pEdict->m_EdictIndex);
 	}
 
-	int idx = 0;
 	edict_t *pBaseEdict = Util::engineserver->PEntityOfEntIndex(0);
 	for (int i=0; i<g_nCurrentEdicts; ++i)
 	{

@@ -40,21 +40,6 @@ static ConVar holylib_vprof_exportreport("holylib_vprof_exportreport", "1", FCVA
 static CVProfModule g_pVProfModule;
 IModule* pVProfModule = &g_pVProfModule;
 
-// Hashes to avoid allocating a std::string for a lookup!
-struct StringHash {
-	using is_transparent = void;
-	size_t operator()(std::string_view sv) const noexcept {
-		return ankerl::unordered_dense::hash<std::string_view>{}(sv);
-	}
-};
-
-struct StringEq {
-	using is_transparent = void;
-	bool operator()(std::string_view a, std::string_view b) const noexcept {
-		return a == b;
-	}
-};
-
 /*
 	Some notes for VPROF:
 		- For Nodes it compares the name POINTER not the contents! If no pointer matches a new node is created!
@@ -906,9 +891,6 @@ Default__index(VProfCounter);
 Default__newindex(VProfCounter);
 Default__GetTable(VProfCounter);
 Default__gc(VProfCounter,
-	VProfCounter* pCounter = (VProfCounter*)pStoredData;
-	if (pCounter)
-		delete pCounter;
 )
 
 LUA_FUNCTION_STATIC(VProfCounter_GetName)
@@ -977,9 +959,6 @@ Default__index(CVProfNode);
 Default__newindex(CVProfNode);
 Default__GetTable(CVProfNode);
 Default__gc(CVProfNode,
-	CVProfNode* pNode = (CVProfNode*)pStoredData;
-	if (pNode)
-		delete pNode;
 )
 
 LUA_FUNCTION_STATIC(VProfNode_GetName)
@@ -1287,12 +1266,12 @@ LUA_FUNCTION_STATIC(vprof_GetCounter)
 	if (counter->strName)
 	{
 		counter->iValue = g_VProfCurrentProfile.FindOrCreateCounter(counter->strName);
-
-		Push_VProfCounter(LUA, counter);
 	} else {
+		LUA->Pop(1);
 		LUA->PushNil();
 	}
 #else
+	LUA->Pop(1);
 	LUA->PushNil();
 #endif
 	return 1;
