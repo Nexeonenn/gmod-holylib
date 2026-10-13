@@ -37,10 +37,16 @@ ConVar Util::holylib_debug_mainutil("holylib_debug_mainutil", "1");
 // We require this here since we depend on the Lua namespace
 void ReferencedLuaUserData::ForceGlobalRelease(void* pData)
 {
+	Lua::ScopedThreadAccess threadAccess; // So that GetAllLuaData may not be modified by others!
+
 	bool bFound = false;
 	const auto& pStateData = Lua::GetAllLuaData();
-	for (Lua::StateData* pState : pStateData)
+	for (auto& [lua, pState] : pStateData)
 	{
+		Lua::StateAccess luaAccess(lua);
+		if (!luaAccess.IsValid())
+			continue;
+
 		const auto& owningData = pState->GetPushedUserData(); // Copy it over in case it->second gets deleted while iterating
 		auto it2 = owningData.find(pData);
 		if (it2 == owningData.end())
@@ -50,9 +56,7 @@ void ReferencedLuaUserData::ForceGlobalRelease(void* pData)
 		for (auto& [_, userData] : owningData)
 		{
 			if (userData->GetData())
-			{
 				userData->SetData(nullptr); // Remove any references any LuaUserData holds to us.
-			}
 		}
 	}
 
@@ -63,8 +67,12 @@ void ReferencedLuaUserData::ForceGlobalRelease(void* pData)
 		We need to pull it again since the it->second might have now been deleted.
 		This is because SetData internally releases the UserData it holds and the UserData will delete itself if all references were freed
 	*/
-	for (Lua::StateData* pState : pStateData)
+	for (auto& [lua, pState] : pStateData)
 	{
+		Lua::StateAccess luaAccess(lua);
+		if (!luaAccess.IsValid())
+			continue;
+
 		auto& owningData = pState->GetPushedUserData(); // Copy it over in case it->second gets deleted while iterating
 		auto it2 = owningData.find(pData);
 		if (it2 == owningData.end())
@@ -92,8 +100,21 @@ CBasePlayer* Util::Get_Player(GarrysMod::Lua::ILuaInterface* LUA, int iStackPos,
 		pObj->SetFromStack(iStackPos);
 		CBaseEntity* pEntity = pObj->GetEntity();
 
-		if (!pEntity && bError)
-			LUA->ArgError(iStackPos, "Tried to use a NULL Entity!");
+		if (!pEntity)
+		{
+			if (bError)
+				LUA->ArgError(iStackPos, "Tried to use a NULL Entity!");
+
+			return nullptr;
+		}
+
+		if (!pEntity->IsPlayer())
+		{
+			if (bError)
+				LUA->ArgError(iStackPos, "Entity is not a player!");
+
+			return nullptr;
+		}
 
 		return (CBasePlayer*)pEntity;
 	}
@@ -108,10 +129,18 @@ CBasePlayer* Util::Get_Player(GarrysMod::Lua::ILuaInterface* LUA, int iStackPos,
 	}
 	
 	CBaseEntity* pEntity = Util::entitylist->GetBaseEntity(*pEntHandle);
-	if (!pEntity || !pEntity->IsPlayer())
+	if (!pEntity)
 	{
 		if (bError)
-			LUA->ArgError(iStackPos, "Player entity is NULL or not a player (!?)");
+			LUA->ArgError(iStackPos, "Tried to use a NULL Entity!");
+
+		return nullptr;
+	}
+
+	if (!pEntity->IsPlayer())
+	{
+		if (bError)
+			LUA->ArgError(iStackPos, "Entity is not a player!");
 
 		return nullptr;
 	}
@@ -160,7 +189,7 @@ void Util::Push_Entity(GarrysMod::Lua::ILuaInterface* LUA, CBaseEntity* pEnt)
 						return;
 					}
 
-					Util::ReferencePush(LUA, pObject->GetReference()); // Assuming the reference is always right.
+					Lua::ReferencePush(LUA, pObject->GetReference()); // Assuming the reference is always right.
 				}
 
 				g_pEntityReferences[nEntryIndex] = udataV(L->top-1); // Should be fine since the GCudata is never moved/nuked.
@@ -191,7 +220,7 @@ void Util::Push_Entity(GarrysMod::Lua::ILuaInterface* LUA, CBaseEntity* pEnt)
 			return;
 		}
 
-		Util::ReferencePush(LUA, pObject->GetReference()); // Assuming the reference is always right.
+		Lua::ReferencePush(LUA, pObject->GetReference()); // Assuming the reference is always right.
 	} else {
 		Warning("holylib: tried to push a entity, but this wasn't implemented for other lua states yet!\n");
 		LUA->PushNil();
@@ -224,6 +253,7 @@ CBaseEntity* Util::Get_Entity(GarrysMod::Lua::ILuaInterface* LUA, int iStackPos,
 	CBaseEntity* pEntity = Util::entitylist->GetBaseEntity(*pEntHandle);
 	if (!pEntity && bError)
 	{
+		// In this case- the Lua userdata held a valid EHANDLE but the EHANDLE refered to a nonexistent Entity
 		Warning(PROJECT_NAME ": EHANDLE Index %i - %i\n", pEntHandle->GetEntryIndex(), pEntHandle->GetSerialNumber());
 		LUA->ArgError(iStackPos, "Tried to use a NULL Entity! (The weird case?)");
 	}
@@ -762,8 +792,8 @@ static uint64_t g_pGModVersion = 0;
 
 IGet* Util::get = nullptr;
 CBaseEntityList* g_pEntityList = nullptr;
-Symbols::lua_rawseti Util::func_lua_rawseti = nullptr;
-Symbols::lua_rawgeti Util::func_lua_rawgeti = nullptr;
+Symbols::lua_rawseti Lua::func_lua_rawseti = nullptr;
+Symbols::lua_rawgeti Lua::func_lua_rawgeti = nullptr;
 IGameEventManager2* Util::gameeventmanager = nullptr;
 IServerGameDLL* Util::servergamedll = nullptr;
 Symbols::lj_tab_new Util::func_lj_tab_new = nullptr;
@@ -771,11 +801,11 @@ Symbols::lj_gc_barrierf Util::func_lj_gc_barrierf = nullptr;
 Symbols::lj_tab_get Util::func_lj_tab_get = nullptr;
 Symbols::lua_setfenv Util::func_lua_setfenv = nullptr;
 Symbols::lua_touserdata Util::func_lua_touserdata = nullptr;
-Symbols::lua_type Util::func_lua_type = nullptr;
+Symbols::lua_type Lua::func_lua_type = nullptr;
 Symbols::lua_gc Util::func_lua_gc = nullptr;
 Symbols::lua_setallocf Util::func_lua_setallocf = nullptr;
 Symbols::lua_newuserdata Util::func_lua_newuserdata = nullptr;
-Symbols::luaL_checklstring Util::func_luaL_checklstring = nullptr;
+Symbols::luaL_checklstring Lua::func_luaL_checklstring = nullptr;
 Symbols::lua_call Util::func_lua_call = nullptr;
 Symbols::lua_pcall Util::func_lua_pcall = nullptr;
 Symbols::lua_cpcall Util::func_lua_cpcall = nullptr;
@@ -888,11 +918,11 @@ void Util::AddDetour()
 	Detour::CheckFunction((void*)func_CM_Vis, "CM_Vis");
 
 	SourceSDK::ModuleLoader lua_shared_loader("lua_shared");
-	func_lua_rawseti = (Symbols::lua_rawseti)Detour::GetFunction(lua_shared_loader.GetModule(), Symbols::lua_rawsetiSym);
-	Detour::CheckFunction((void*)func_lua_rawseti, "lua_rawseti");
+	Lua::func_lua_rawseti = (Symbols::lua_rawseti)Detour::GetFunction(lua_shared_loader.GetModule(), Symbols::lua_rawsetiSym);
+	Detour::CheckFunction((void*)Lua::func_lua_rawseti, "lua_rawseti");
 
-	func_lua_rawgeti = (Symbols::lua_rawgeti)Detour::GetFunction(lua_shared_loader.GetModule(), Symbols::lua_rawgetiSym);
-	Detour::CheckFunction((void*)func_lua_rawgeti, "lua_rawgeti");
+	Lua::func_lua_rawgeti = (Symbols::lua_rawgeti)Detour::GetFunction(lua_shared_loader.GetModule(), Symbols::lua_rawgetiSym);
+	Detour::CheckFunction((void*)Lua::func_lua_rawgeti, "lua_rawgeti");
 
 	func_lj_tab_new = (Symbols::lj_tab_new)Detour::GetFunction(lua_shared_loader.GetModule(), Symbols::lj_tab_newSym);
 	Detour::CheckFunction((void*)func_lj_tab_new, "lj_tab_new");
@@ -900,8 +930,8 @@ void Util::AddDetour()
 	func_lua_touserdata = (Symbols::lua_touserdata)Detour::GetFunction(lua_shared_loader.GetModule(), Symbols::lua_touserdataSym);
 	Detour::CheckFunction((void*)func_lua_touserdata, "lua_touserdata");
 
-	func_lua_type = (Symbols::lua_type)Detour::GetFunction(lua_shared_loader.GetModule(), Symbols::lua_typeSym);
-	Detour::CheckFunction((void*)func_lua_type, "lua_type");
+	Lua::func_lua_type = (Symbols::lua_type)Detour::GetFunction(lua_shared_loader.GetModule(), Symbols::lua_typeSym);
+	Detour::CheckFunction((void*)Lua::func_lua_type, "lua_type");
 
 	func_lua_gc = (Symbols::lua_gc)Detour::GetFunction(lua_shared_loader.GetModule(), Symbols::lua_gcSym);
 	Detour::CheckFunction((void*)func_lua_gc, "lua_gc");
@@ -912,8 +942,8 @@ void Util::AddDetour()
 	func_lua_setfenv = (Symbols::lua_type)Detour::GetFunction(lua_shared_loader.GetModule(), Symbols::lua_setfenvSym);
 	Detour::CheckFunction((void*)func_lua_setfenv, "lua_setfenv");
 
-	func_luaL_checklstring = (Symbols::luaL_checklstring)Detour::GetFunction(lua_shared_loader.GetModule(), Symbols::luaL_checklstringSym);
-	Detour::CheckFunction((void*)func_luaL_checklstring, "luaL_checklstring");
+	Lua::func_luaL_checklstring = (Symbols::luaL_checklstring)Detour::GetFunction(lua_shared_loader.GetModule(), Symbols::luaL_checklstringSym);
+	Detour::CheckFunction((void*)Lua::func_luaL_checklstring, "luaL_checklstring");
 
 	func_lua_call = (Symbols::lua_call)Detour::GetFunction(lua_shared_loader.GetModule(), Symbols::lua_callSym);
 	Detour::CheckFunction((void*)func_lua_call, "lua_call");
@@ -940,7 +970,7 @@ void Util::AddDetour()
 	Detour::CheckFunction((void*)func_lua_newuserdata, "lua_newuserdata");
 
 	if (
-		!func_lua_touserdata || !func_lua_type || !func_lua_setfenv || !func_luaL_checklstring || !func_lua_call ||
+		!func_lua_touserdata || !Lua::func_lua_type || !func_lua_setfenv || !Lua::func_luaL_checklstring || !func_lua_call ||
 		!func_lua_pcall || !func_lua_cpcall || !func_lua_insert || !func_lua_toboolean || !func_lua_newuserdata
 		)
 	{
@@ -1016,7 +1046,7 @@ void Util::CheckVersion(bool bAutoUpdate) // This is called only when holylib is
 	};
 
 	auto res = pClient.Get("/api/check_version");
-	if (res->status != 200)
+	if (!res || res->status != 200)
 		return;
 
 	Bootil::Data::Tree pTree;
@@ -1063,7 +1093,7 @@ void Util::CheckVersion(bool bAutoUpdate) // This is called only when holylib is
 
 		if (!pReleaseDownload || pReleaseDownload->status != 200)
 		{
-			Msg(PROJECT_NAME " - versioncheck: Autoupdate failed to download new version! (%i)\n", pReleaseDownload->status);
+			Msg(PROJECT_NAME " - versioncheck: Autoupdate failed to download new version! (%i)\n", pReleaseDownload ? pReleaseDownload->status : -1);
 			return;
 		}
 

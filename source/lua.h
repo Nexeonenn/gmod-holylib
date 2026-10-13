@@ -142,7 +142,6 @@ namespace Lua
 	 */
 	extern bool PushHook(const char* pName, GarrysMod::Lua::ILuaInterface* pLua = g_Lua);
 	extern void AddDetour();
-	extern void SetManualShutdown();
 	extern void ManualShutdown();
 	extern GarrysMod::Lua::ILuaInterface* GetRealm(unsigned char);
 	extern GarrysMod::Lua::ILuaShared* GetShared();
@@ -157,6 +156,16 @@ namespace Lua
 	// But it didn't work on Windows clients as we do also interact with both server and client state
 	// yet g_Lua is only the state HolyLib was loaded in effectively breaking the other state
 	// So now we simply mark our own states.
+
+	FORCEINLINE bool IsGModState(const lua_State* L)
+	{
+		return L->dummy_ffid == FF_C;
+	}
+
+	FORCEINLINE bool IsHolyState(const lua_State* L)
+	{
+		return L->dummy_ffid != FF_C;
+	}
 
 	extern bool g_bUsingLuaJIT; // Hacky workaround for the LuaJIT module- this is due to GCstr being different between old 2.1 and new
 	FORCEINLINE TValue* index2adr(lua_State* L, int iStackPos)
@@ -516,7 +525,8 @@ namespace Lua
 	}
 	extern void CreateLuaData(GarrysMod::Lua::ILuaInterface* LUA, bool bNullOut = false);
 	extern void RemoveLuaData(GarrysMod::Lua::ILuaInterface* LUA);
-	extern const unordered_set<Lua::StateData*>& GetAllLuaData();
+	extern const unordered_map<GarrysMod::Lua::ILuaInterface*, Lua::StateData*>& GetAllLuaData();
+	extern bool IsValidLuaState(GarrysMod::Lua::ILuaInterface* LUA);
 
 	// In a single call checks the type and returns the userdata saving some work.
 	extern bool CheckHolyLibType(GarrysMod::Lua::ILuaInterface* LUA, int nStackPos, int nType, LuaUserData** pUserData);
@@ -1012,6 +1022,110 @@ static void FUNC_FASTCALL ASM_##name(T1 arg1, T2 arg2, T3 arg3)
 	};
 
 	extern int TraceRecord_UserData_GetEnv(lua_TraceRecorder* rec);
+
+	#define LUA_REGISTRYINDEX	(-10000)
+	#define LUA_ENVIRONINDEX	(-10001)
+	#define LUA_GLOBALSINDEX	(-10002)
+
+	#define SHIFT_STACK(stack, offset) (stack > 0) ? (stack + offset) : (stack - offset)
+
+	FORCEINLINE bool IsHolyState(const GarrysMod::Lua::ILuaInterface* L)
+	{
+		return (L->GetState())->dummy_ffid != 1; // FF_C = 1
+	}
+
+	/*
+	 * RawSetI & RawGetI are way faster but Gmod doesn't expose or even use them :(
+	 */
+	extern Symbols::lua_rawseti func_lua_rawseti;
+	inline void RawSetI(GarrysMod::Lua::ILuaInterface* LUA, int iStackPos, int iValue)
+	{
+		if (IsHolyState(LUA))
+		{
+			lua_rawseti(LUA->GetState(), iStackPos, iValue);
+			return;
+		}
+
+		if (func_lua_rawseti)
+		{
+			func_lua_rawseti(LUA->GetState(), iStackPos, iValue);
+		} else {
+			LUA->PushNumber(iValue);
+			LUA->Push(-2);
+			LUA->Remove(-3);
+			LUA->RawSet(SHIFT_STACK(iStackPos, 1));
+		}
+	}
+
+	extern Symbols::lua_rawgeti func_lua_rawgeti;
+	inline void RawGetI(GarrysMod::Lua::ILuaInterface* LUA, int iStackPos, int iValue)
+	{
+		if (IsHolyState(LUA))
+		{
+			lua_rawgeti(LUA->GetState(), iStackPos, iValue);
+			return;
+		}
+
+		if (func_lua_rawgeti)
+		{
+			func_lua_rawgeti(LUA->GetState(), iStackPos, iValue);
+		} else {
+			LUA->PushNumber(iValue);
+			LUA->RawGet(SHIFT_STACK(iStackPos, 1));
+		}
+	}
+
+	extern Symbols::luaL_checklstring func_luaL_checklstring;
+	inline const char* CheckLString(GarrysMod::Lua::ILuaInterface* LUA, int nStackPos, size_t* nOutLength)
+	{
+		if (IsHolyState(LUA))
+			return luaL_checklstring(LUA->GetState(), nStackPos, nOutLength);
+
+		if (func_luaL_checklstring)
+		{
+			return func_luaL_checklstring(LUA->GetState(), nStackPos, nOutLength);
+		} else {
+			const char* pStr = LUA->CheckString(nStackPos);
+			if (nOutLength)
+				*nOutLength = LUA->ObjLen(nStackPos);
+
+			return pStr;
+		}
+	}
+
+	extern Symbols::lua_type func_lua_type;
+	inline int lua_type(GarrysMod::Lua::ILuaInterface* LUA, int nStackPos)
+	{
+		if (IsHolyState(LUA))
+			return lua_type(LUA->GetState(), nStackPos);
+
+		if (func_lua_type)
+			return func_lua_type(LUA->GetState(), nStackPos);
+		else
+			return LUA->GetType(nStackPos);
+	}
+
+	/*
+	 * Why do we have the same code here when CLuaInterface::ReferencePush does exactly the same?
+	 * Because like this we should hopefully skip possibly funny code & the vtable call.
+	 *
+	 * NOTE: It does seem to be faster so were going to keep this.
+	 */
+	inline void ReferencePush(GarrysMod::Lua::ILuaInterface* LUA, int iReference)
+	{
+		if (IsHolyState(LUA))
+		{
+			lua_rawgeti(LUA->GetState(), LUA_REGISTRYINDEX, iReference);
+			return;
+		}
+
+		if (func_lua_rawgeti)
+		{
+			func_lua_rawgeti(LUA->GetState(), LUA_REGISTRYINDEX, iReference);
+		} else {
+			LUA->ReferencePush(iReference);
+		}
+	}
 }
 
 // Creates a function Get[funcName]LuaData and returns the stored module data from the given module.

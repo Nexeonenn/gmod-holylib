@@ -234,7 +234,7 @@ void CheckPhysicsLag(const char* pFunctionName, CPhysicsObject* pObject1, CPhysi
 					Push_IPhysicsObject(g_Lua, pCurrentOVObject);
 
 					g_Lua->Push(-1);
-					Util::RawSetI(g_Lua, -3, i+1);
+					Lua::RawSetI(g_Lua, -3, i+1);
 
 					g_Lua->PushNumber(i+1);
 					g_Lua->SetTable(-3);
@@ -253,7 +253,7 @@ void CheckPhysicsLag(const char* pFunctionName, CPhysicsObject* pObject1, CPhysi
 					Push_IPhysicsObject(g_Lua, pCurrentOVObject);
 
 					g_Lua->Push(-1);
-					Util::RawSetI(g_Lua, -3, ++i);
+					Lua::RawSetI(g_Lua, -3, ++i);
 
 					g_Lua->PushNumber(i);
 					g_Lua->SetTable(-3);
@@ -621,7 +621,7 @@ public:
 		if (m_iObjectWakeFunction == -1)
 			return;
 
-		Util::ReferencePush(pLua, m_iObjectWakeFunction);
+		Lua::ReferencePush(pLua, m_iObjectWakeFunction);
 		Push_IPhysicsObject(pLua, obj);
 		pLua->CallFunctionProtected(1, 0, true);
 	}
@@ -633,7 +633,7 @@ public:
 		if (m_iObjectSleepFunction == -1)
 			return;
 
-		Util::ReferencePush(pLua, m_iObjectSleepFunction);
+		Lua::ReferencePush(pLua, m_iObjectSleepFunction);
 		Push_IPhysicsObject(pLua, obj);
 		pLua->CallFunctionProtected(1, 0, true);
 	}
@@ -1160,8 +1160,8 @@ LUA_FUNCTION_STATIC(physenv_DestroyEnvironment)
 		}
 	}
 
+	UnregisterPhysicsEnvironment(pLuaEnv->pEnvironment);
 	g_pPhysics->DestroyEnvironment(pEnvironment);
-	delete pLuaEnv;
 
 	return 0;
 }
@@ -1174,7 +1174,7 @@ LUA_FUNCTION_STATIC(physenv_GetAllEnvironments)
 		FOR_EACH_VEC(pPhys->m_envList, i)
 		{
 			Push_ILuaPhysicsEnvironment(LUA, RegisterPhysicsEnvironment(pPhys->m_envList[i]));
-			Util::RawSetI(LUA, -2, ++idx);	
+			Lua::RawSetI(LUA, -2, ++idx);	
 		}
 	
 	return 1;
@@ -1326,6 +1326,7 @@ LUA_FUNCTION_STATIC(IPhysicsEnvironment_SetPerformanceSettings)
 	LUA->CheckType(2, GarrysMod::Lua::Type::Table);
 
 	physics_performanceparams_t params;
+	pEnvironment->GetPerformanceSettings(&params);
 	LUA->Push(2);
 		if (Util::HasField(LUA, "LookAheadTimeObjectsVsObject", GarrysMod::Lua::Type::Number))
 			params.lookAheadTimeObjectsVsObject = (float)LUA->GetNumber(-1);
@@ -1440,7 +1441,7 @@ LUA_FUNCTION_STATIC(IPhysicsEnvironment_GetActiveObjects)
 	for (int i=0; i<activeCount; ++i)
 	{
 		Push_IPhysicsObject(LUA, pActiveList[i]);
-		Util::RawSetI(LUA, -2, ++idx);
+		Lua::RawSetI(LUA, -2, ++idx);
 	}
 
 	return 1;
@@ -1457,7 +1458,7 @@ LUA_FUNCTION_STATIC(IPhysicsEnvironment_GetObjectList)
 	for (int i = 0; i < iCount; ++i)
 	{
 		Push_IPhysicsObject(LUA, pList[i]);
-		Util::RawSetI(LUA, -2, ++idx);
+		Lua::RawSetI(LUA, -2, ++idx);
 	}
 
 	return 1;
@@ -1651,7 +1652,7 @@ static void FillObjectParams(objectparams_t& params, int iStackPos, GarrysMod::L
 			params.massCenterOverride = Get_Vector(LUA, -1, true);
 		LUA->Pop(1);
 
-		if (Util::HasField(LUA, "name", GarrysMod::Lua::Type::Number))
+		if (Util::HasField(LUA, "name", GarrysMod::Lua::Type::String))
 			params.pName = LUA->GetString(-1);
 		LUA->Pop(1);
 
@@ -2345,7 +2346,7 @@ LUA_FUNCTION_STATIC(physcollide_UnserializeCollide)
 	Get_CPhysCollide(LUA, 1, true);
 
 	size_t iSize;
-	const char* pData = Util::CheckLString(LUA, 2, &iSize);
+	const char* pData = Lua::CheckLString(LUA, 2, &iSize);
 
 	int index = LUA->CheckNumber(3);
 

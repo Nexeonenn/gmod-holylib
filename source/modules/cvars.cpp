@@ -196,7 +196,7 @@ LUA_FUNCTION_STATIC(cvars_GetAll)
 
 			LUA->PushUserType((ConVar*)var, GarrysMod::Lua::Type::ConVar);
 
-			Util::RawSetI(LUA, -2, ++idx);
+			Lua::RawSetI(LUA, -2, ++idx);
 		}
 
 	return 1;
@@ -306,16 +306,16 @@ void CCVarsModule::InitDetour(bool bServerInit)
 
 	ICvar* pCVar = vstdlib_loader.GetInterface<ICvar>(CVAR_INTERFACE_VERSION); // g_pCVar isn't initialized yet since tiers didn't connect yet.
 #if ARCHITECTURE_IS_X86_64
-		ICvar::Iterator iter(pCVar);
-		for ( iter.SetFirst() ; iter.IsValid() ; iter.Next() )
-		{
-			ConCommandBase* pCommand = iter.Get();
+	ICvar::Iterator iter(pCVar);
+	for ( iter.SetFirst() ; iter.IsValid() ; iter.Next() )
+	{
+		ConCommandBase* pCommand = iter.Get();
 #else
-		for (ConCommandBase* pCommand = pCVar->GetCommands(); pCommand; pCommand = pCommand->GetNext())
-		{
+	for (ConCommandBase* pCommand = pCVar->GetCommands(); pCommand; pCommand = pCommand->GetNext())
+	{
 #endif
-			AddCommandBaseName(pCommand);
-		}
+		AddCommandBaseName(pCommand);
+	}
 }
 
 void CCVarsModule::Shutdown()

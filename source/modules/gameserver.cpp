@@ -141,25 +141,30 @@ LUA_FUNCTION_STATIC(CBaseClient_ClientPrint)
 
 LUA_FUNCTION_STATIC(CBaseClient_SendLua)
 {
-	CBaseClient* pClient = Get_CBaseClient(LUA, 1, true);
+	CNetChan* pNetChannel = (CNetChan*)Util::Get_NetChannel(LUA, 1, true);
 	const char* strLuaCode = LUA->CheckString(2);
-	bool bForceReliable = LUA->GetBool(3);
+	bool bAsUnreliable = LUA->GetBool(3);
 
-	// NOTE: Original bug was that we had the wrong bitcount for the net messages type which broke every netmessage we created including this one.
-	// It should work now, so let's test it later. (Never tested it ._., I should really try it once)
-	SVC_UserMessage msg;
-	msg.m_nMsgType = Util::pUserMessages->LookupUserMessage("LuaCmd");
-	if (msg.m_nMsgType == -1)
+	// NOTE:
+	// I want to avoid having to allocate a buffer which is why we just directly write into the stream
+	// Since CNetChan::SendNetMsg does the same anyways
+
+	int totalLength = 1 + strlen(strLuaCode) + 1;
+	bf_write* pBuf = bAsUnreliable ? &pNetChannel->m_StreamUnreliable : &pNetChannel->m_StreamReliable;
+	if (pBuf->GetNumBytesLeft() < (totalLength+4))
+		LUA->ThrowError("Cannot send Lua as it would overflow reliable stream");
+
+	pBuf->WriteUBitLong(svc_GMod_ServerToClient, NETMSG_TYPE_BITS);
+	pBuf->WriteUBitLong(totalLength * 8, 20);
+	pBuf->WriteByte(GarrysMod::NetworkMessage::LuaRun);
+	if (!pBuf->WriteString(strLuaCode))
 	{
+		// We somehow overflowed...
 		LUA->PushBool(false);
 		return 1;
 	}
 
-	byte pUserData[PAD_NUMBER(MAX_USER_MSG_DATA, 4)];
-	msg.m_DataOut.StartWriting(pUserData, sizeof(pUserData));
-	msg.m_DataOut.WriteString(strLuaCode);
-
-	LUA->PushBool(pClient->SendNetMsg(msg, bForceReliable));
+	LUA->PushBool(true);
 	return 1;
 }
 
@@ -335,7 +340,7 @@ LUA_FUNCTION_STATIC(CBaseClient_SendNetMsg)
 	msg.m_iLength = bf->GetNumBitsWritten();
 #else
 	size_t nLength;
-	const char* pData = Util::CheckLString(LUA, 4, &nLength);
+	const char* pData = Lua::CheckLString(LUA, 4, &nLength);
 
 	msg.m_DataOut.StartWriting((void*)pData, nLength);
 	msg.m_iLength = nLength * 8;
@@ -944,7 +949,7 @@ LUA_FUNCTION_STATIC(CBaseClient_SetMaxBufferSize)
 		{
 			INetMessage* msg = pNetChannel->m_NetMessages[ i ];
 			LUA->PushString(msg->GetName());
-			Util::RawSetI(LUA, -2, msg->GetType());
+			Lua::RawSetI(LUA, -2, msg->GetType());
 		}
 
 	return 1;
@@ -1858,7 +1863,7 @@ LUA_FUNCTION_STATIC(CNetChan_SendMessage)
 	msg.m_iLength = bf->GetNumBitsWritten();
 #else
 	size_t nLength;
-	const char* pData = Util::CheckLString(LUA, 2, &nLength);
+	const char* pData = Lua::CheckLString(LUA, 2, &nLength);
 
 	msg.m_DataOut.StartWriting((void*)pData, nLength);
 	msg.m_iLength = nLength * 8;
@@ -1913,7 +1918,7 @@ LUA_FUNCTION_STATIC(CNetChan_Get##name) \
 \
 	if (pHandler && pHandler->m_i##name##Function != -1) \
 	{ \
-		Util::ReferencePush(LUA, pHandler->m_i##name##Function); \
+		Lua::ReferencePush(LUA, pHandler->m_i##name##Function); \
 	} else { \
 		LUA->PushNil(); \
 	} \
@@ -2103,7 +2108,7 @@ LUA_FUNCTION_STATIC(gameserver_GetAll)
 				continue;
 
 			Push_CBaseClient(LUA, pClient);
-			Util::RawSetI(LUA, -2, ++iTableIndex);
+			Lua::RawSetI(LUA, -2, ++iTableIndex);
 		}
 
 		{
@@ -2114,7 +2119,7 @@ LUA_FUNCTION_STATIC(gameserver_GetAll)
 					continue;
 
 				Push_CBaseClient(LUA, pClient);
-				Util::RawSetI(LUA, -2, ++iTableIndex);
+				Lua::RawSetI(LUA, -2, ++iTableIndex);
 			}
 		}
 
@@ -2322,7 +2327,7 @@ LUA_FUNCTION_STATIC(gameserver_BroadcastMessage)
 	msg.m_iLength = bf->GetNumBitsWritten();
 #else
 	size_t nLength;
-	const char* pData = Util::CheckLString(LUA, 3, &nLength);
+	const char* pData = Lua::CheckLString(LUA, 3, &nLength);
 
 	msg.m_DataOut.StartWriting((void*)pData, nLength);
 	msg.m_iLength = nLength * 8;
@@ -2339,7 +2344,7 @@ LUA_FUNCTION_STATIC(gameserver_SendConnectionlessPacket)
 	bf_write* msg = Get_bf_write(LUA, 1, true);
 #else
 	size_t nLength;
-	const char* pData = Util::CheckLString(LUA, 1, &nLength);
+	const char* pData = Lua::CheckLString(LUA, 1, &nLength);
 #endif
 
 	netadrnew_t adr;
@@ -2441,7 +2446,7 @@ LUA_FUNCTION_STATIC(gameserver_GetCreatedNetChannels)
 		for (auto& handler : g_pNetMessageHandlers)
 		{
 			Push_CNetChan(LUA, handler->m_pChan);
-			Util::RawSetI(LUA, -2, ++idx);
+			Lua::RawSetI(LUA, -2, ++idx);
 		}
 
 	return 1;

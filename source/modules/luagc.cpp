@@ -88,6 +88,9 @@ class TraverseInfo
 public:
 	void AddNext(GCobj* pObj)
 	{
+		if (!pObj)
+			return;
+
 		if (m_bLocked)
 			return;
 
@@ -264,17 +267,14 @@ static bool LuaGC_ReferenceCheck(GCobj* pTargetObj, GCobj* pObj, lua_State* L)
 			if (gcref(pVal->env) == pTargetObj)
 				return true;
 
-			GCupval* pUpVal = gcref(pVal->openupval) ? gco2uv(gcref(pVal->openupval)) : NULL;
-			while (pUpVal)
+			for (GCobj* up = gcref(pVal->openupval); up != NULL; up = gcnext(up))
 			{
-				TValue* pUpValTV = uvval(pUpVal);
+				TValue* pUpValTV = uvval(gco2uv(up));
 				if (pUpValTV && tvisgcv(pUpValTV))
 				{
 					if (obj2gco(gcV(pUpValTV)) == pTargetObj)
 						return true;
 				}
-
-				pUpVal = uvnext(pUpVal);
 			}
 
 			TValue* pBase = Lua::LuaBase(pVal);
@@ -298,17 +298,27 @@ static bool LuaGC_ReferenceCheck(GCobj* pTargetObj, GCobj* pObj, lua_State* L)
 
 LUA_FUNCTION_STATIC(luagc_GetReferences)
 {
-	LUA->PreCreateTable(0, 0);
+	
 	lua_State* L = LUA->GetState();
 	global_State* pGState = G(L);
 	if (!pGState)
+	{
+		LUA->PreCreateTable(0, 0);
 		return 1;
+	}
 
 	TValue* pVal = Lua::index2adr(L, 1);
 	if (!tvisgcv(pVal))
+	{
+		LUA->PreCreateTable(0, 0);
 		return 1;
+	}
 
 	GCobj* pTargetObject = gcV(pVal);
+
+	// We do it here as else we mess with index2adr causing funky stuff
+	LUA->PreCreateTable(0, 0);
+
 	int nCount = 0;
 	GCobj* pObj = gcref(pGState->gc.root);
 	while (pObj)
@@ -317,7 +327,7 @@ LUA_FUNCTION_STATIC(luagc_GetReferences)
 		{
 			LUA->PushNil();
 			setgcV(L, Lua::LuaTop(L)-1, pObj, ~pObj->gch.gct);
-			Util::RawSetI(LUA, -2, ++nCount);
+			Lua::RawSetI(LUA, -2, ++nCount);
 		}
 
 		pObj = gcref(pObj->gch.nextgc);
@@ -448,14 +458,11 @@ static void LuaGC_References(GCobj* pObj, TraverseInfo& info, lua_State* L, Garr
 			lua_State* pVal = gco2th(pObj);
 			info.AddNext(gcref(pVal->env));
 
-			GCupval* pUpVal = gcref(pVal->openupval) ? gco2uv(gcref(pVal->openupval)) : NULL;
-			while (pUpVal)
+			for (GCobj* up = gcref(pVal->openupval); up != NULL; up = gcnext(up))
 			{
-				TValue* pUpValTV = uvval(pUpVal);
+				TValue* pUpValTV = uvval(gco2uv(up));
 				if (pUpValTV && tvisgcv(pUpValTV))
 					info.AddNext(obj2gco(gcV(pUpValTV)));
-
-				pUpVal = uvnext(pUpVal);
 			}
 
 			TValue* pBase = Lua::LuaBase(pVal);
@@ -517,7 +524,7 @@ LUA_FUNCTION_STATIC(luagc_GetContainingReferences)
 	{
 		LUA->PushNil();
 		setgcV(L, Lua::LuaTop(L)-1, pObj, ~pObj->gch.gct);
-		Util::RawSetI(LUA, -2, ++nCount);
+		Lua::RawSetI(LUA, -2, ++nCount);
 	}
 
 	return 1;
@@ -526,11 +533,12 @@ LUA_FUNCTION_STATIC(luagc_GetContainingReferences)
 LUA_FUNCTION_STATIC(luagc_GetAllGCObjects)
 {
 	lua_State* L = LUA->GetState();
-
-	LUA->PreCreateTable(0, 0);
 	global_State* pGState = G(L);
 	if (!pGState)
+	{
+		LUA->PreCreateTable(0, 0);
 		return 1;
+	}
 
 	// Allows you to pass this function an GC object
 	// This causes us to stop when we reach it
@@ -539,15 +547,18 @@ LUA_FUNCTION_STATIC(luagc_GetAllGCObjects)
 	if (tvisgcv(pVal))
 		pTargetObject = gcV(pVal);
 
+	// We do it here as else we mess with index2adr causing funky stuff
+	LUA->PreCreateTable(0, 0);
+
 	int nCount = 0;
 	GCobj* pObj = gcref(pGState->gc.root);
 	while (pObj && pObj != pTargetObject)
 	{
 		LUA->PushNil();
 		setgcV(L, Lua::LuaTop(L)-1, pObj, ~pObj->gch.gct);
-		Util::RawSetI(LUA, -2, ++nCount);
+		Lua::RawSetI(LUA, -2, ++nCount);
 
-		pObj = gcref(pObj->gch.nextgc);
+		pObj = gcnext(pObj);
 	}
 
 	return 1;
@@ -659,7 +670,7 @@ static void LuaGC_ShowReferences(GarrysMod::Lua::ILuaInterface* LUA, GCobj* pObj
 					if (tvisgcv(pTV))
 					{
 						PushGCObject(LUA, gcV(pTV));
-						Util::RawSetI(LUA, -2, ++nCount);
+						Lua::RawSetI(LUA, -2, ++nCount);
 					}
 				}
 				LUA->RawSet(-3);
@@ -693,7 +704,7 @@ static void LuaGC_ShowReferences(GarrysMod::Lua::ILuaInterface* LUA, GCobj* pObj
 							LUA->RawSet(-3);
 						}
 
-						Util::RawSetI(LUA, -2, ++nCount);
+						Lua::RawSetI(LUA, -2, ++nCount);
 					}
 				}
 				LUA->RawSet(-3);
@@ -721,7 +732,7 @@ static void LuaGC_ShowReferences(GarrysMod::Lua::ILuaInterface* LUA, GCobj* pObj
 				for (uint32_t i = 0; i < pVal->l.nupvalues; i++)
 				{
 					PushGCObject(LUA, obj2gco(&gcref(pVal->l.uvptr[i])->uv));
-					Util::RawSetI(LUA, -2, ++nCount);
+					Lua::RawSetI(LUA, -2, ++nCount);
 				}
 				LUA->RawSet(-3);
 			} else {
@@ -734,7 +745,7 @@ static void LuaGC_ShowReferences(GarrysMod::Lua::ILuaInterface* LUA, GCobj* pObj
 					if (tvisgcv(pTV))
 					{
 						PushGCObject(LUA, gcV(pTV));
-						Util::RawSetI(LUA, -2, ++nCount);
+						Lua::RawSetI(LUA, -2, ++nCount);
 					}
 				}
 				LUA->RawSet(-3);
@@ -756,7 +767,7 @@ static void LuaGC_ShowReferences(GarrysMod::Lua::ILuaInterface* LUA, GCobj* pObj
 			for (ptrdiff_t i = -(ptrdiff_t)pVal->sizekgc; i < 0; i++)
 			{
 				PushGCObject(LUA, proto_kgc(pVal, i));
-				Util::RawSetI(LUA, -2, ++nCount);
+				Lua::RawSetI(LUA, -2, ++nCount);
 			}
 			LUA->RawSet(-3);
 
@@ -790,7 +801,7 @@ static void LuaGC_ShowReferences(GarrysMod::Lua::ILuaInterface* LUA, GCobj* pObj
 				if (ir->o == IR_KGC)
 				{
 					PushGCObject(LUA, ir_kgc(ir));
-					Util::RawSetI(LUA, -2, ++nCount);
+					Lua::RawSetI(LUA, -2, ++nCount);
 				}
 
 				if (irt_is64(ir->t) && ir->o != IR_KNULL)
@@ -833,17 +844,14 @@ static void LuaGC_ShowReferences(GarrysMod::Lua::ILuaInterface* LUA, GCobj* pObj
 			LUA->PushString("upvalues");
 			LUA->PreCreateTable(0, 0);
 			int nCount = 0;
-			GCupval* pUpVal = gcref(pVal->openupval) ? gco2uv(gcref(pVal->openupval)) : NULL;
-			while (pUpVal)
+			for (GCobj* up = gcref(pVal->openupval); up != NULL; up = gcnext(up))
 			{
-				TValue* pUpValTV = uvval(pUpVal);
+				TValue* pUpValTV = uvval(gco2uv(up));
 				if (pUpValTV && tvisgcv(pUpValTV))
 				{
 					PushGCObject(LUA, obj2gco(gcV(pUpValTV)));
-					Util::RawSetI(LUA, -2, ++nCount);
+					Lua::RawSetI(LUA, -2, ++nCount);
 				}
-
-				pUpVal = uvnext(pUpVal);
 			}
 			LUA->RawSet(-3);
 			
@@ -857,7 +865,7 @@ static void LuaGC_ShowReferences(GarrysMod::Lua::ILuaInterface* LUA, GCobj* pObj
 				if (tvisgcv(pBase))
 				{
 					PushGCObject(LUA, gcval(pBase));
-					Util::RawSetI(LUA, -2, ++nCount);
+					Lua::RawSetI(LUA, -2, ++nCount);
 				}
 
 				pBase++;
@@ -873,7 +881,7 @@ static void LuaGC_ShowReferences(GarrysMod::Lua::ILuaInterface* LUA, GCobj* pObj
 LUA_FUNCTION_STATIC(luagc_GetFormattedGCObjectInfo)
 {
 	TValue* pVal = Lua::index2adr(LUA->GetState(), 1);
-	if (!tvisgcv(pVal))
+	if (!tvisgcv(pVal) || tvisnil(pVal))
 	{
 		LUA->PushNil();
 		return 1;
@@ -1039,10 +1047,9 @@ static size_t LuaGC_Size(GCobj* pObj, TraverseInfo& info, lua_State* L)
 
 			info.AddNext(gcref(pVal->env));
 
-			GCupval* pUpVal = gcref(pVal->openupval) ? gco2uv(gcref(pVal->openupval)) : NULL;
-			while (pUpVal)
+			for (GCobj* up = gcref(pVal->openupval); up != NULL; up = gcnext(up))
 			{
-				TValue* pUpValTV = uvval(pUpVal);
+				TValue* pUpValTV = uvval(gco2uv(up));
 				if (pUpValTV)
 				{
 					if (tvisgcv(pUpValTV))
@@ -1050,8 +1057,6 @@ static size_t LuaGC_Size(GCobj* pObj, TraverseInfo& info, lua_State* L)
 					else
 						nSize += sizeof(TValue);
 				}
-
-				pUpVal = uvnext(pUpVal);
 			}
 
 			TValue* pBase = Lua::LuaBase(pVal);

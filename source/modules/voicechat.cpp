@@ -23,7 +23,6 @@
 class CVoiceChatModule : public IModule
 {
 public:
-	void Init(CreateInterfaceFn* appfn, CreateInterfaceFn* gamefn) override;
 	void LuaInit(GarrysMod::Lua::ILuaInterface* pLua, bool bServerInit) override;
 	void LuaShutdown(GarrysMod::Lua::ILuaInterface* pLua) override;
 	void ServerActivate(edict_t* pEdictList, int edictCount, int clientMax) override;
@@ -1170,7 +1169,7 @@ struct VoiceStream {
 			for (auto& [tickCount, voiceData] : pVoiceData)
 			{
 				Push_VoiceData(pLua, bDirect ? voiceData : voiceData->CreateCopy());
-				Util::RawSetI(pLua, -2, tickCount);
+				Lua::RawSetI(pLua, -2, tickCount);
 			}
 	}
 
@@ -1449,7 +1448,7 @@ struct VoiceEffectJob {
 	bool bFailed = false;
 };
 
-static void VoiceEffect(VoiceEffectJob*& pJob)
+static void VoiceEffect(VoiceEffectJob* pJob)
 {
 	if (pJob->pStreamData != nullptr)
 	{
@@ -1810,7 +1809,7 @@ static std::string_view getFileExtension(const std::string_view& fileName) {
 	return fileName.substr(lastDotPos + 1);
 }
 
-static void VoiceStreamJob(VoiceStreamTask*& task)
+static void VoiceStreamJob(VoiceStreamTask* task)
 {
 	switch(task->iType)
 	{
@@ -1934,7 +1933,7 @@ LUA_FUNCTION_STATIC(voicechat_LoadVoiceStreamFromWaveString)
 	LuaVoiceModuleData* pData = GetVoiceChatLuaData(LUA);
 
 	size_t pWaveDataLength;
-	const char* pWaveData = Util::CheckLString(LUA, 1, &pWaveDataLength);
+	const char* pWaveData = Lua::CheckLString(LUA, 1, &pWaveDataLength);
 	bool bAsync = LUA->IsType(2, GarrysMod::Lua::Type::Function);
 	bool bPromiseToNeverModify = LUA->GetBool(3);
 
@@ -2297,19 +2296,11 @@ void CVoiceChatModule::Shutdown()
 	}
 }
 
-IVoiceServer* g_pVoiceServer = nullptr;
-void CVoiceChatModule::Init(CreateInterfaceFn* appfn, CreateInterfaceFn* gamefn)
-{
-	if (appfn[0])
-	{
-		g_pVoiceServer = (IVoiceServer*)appfn[0](INTERFACEVERSION_VOICESERVER, nullptr);
-	} else {
-		SourceSDK::FactoryLoader engine_loader("engine");
-		g_pVoiceServer = engine_loader.GetInterface<IVoiceServer>(INTERFACEVERSION_VOICESERVER);
-	}
-
-	Detour::CheckValue("get interface", "g_pVoiceServer", g_pVoiceServer != nullptr);
-}
+#if SYSTEM_WINDOWS
+DETOUR_THISCALL_START()
+	DETOUR_THISCALL_ADDRETFUNC3( hook_CVoiceGameMgrHelper_CanPlayerHearPlayer, bool, CanPlayerHearPlayer, void*, CBasePlayer*, CBasePlayer*, bool& );
+DETOUR_THISCALL_FINISH();
+#endif
 
 void CVoiceChatModule::InitDetour(bool bPreServer)
 {
@@ -2323,11 +2314,12 @@ void CVoiceChatModule::InitDetour(bool bPreServer)
 		(void*)hook_SV_BroadcastVoiceData, m_pID
 	);
 
+	DETOUR_PREPARE_THISCALL();
 	SourceSDK::ModuleLoader server_loader("server");
 	Detour::Create(
 		&detour_CVoiceGameMgrHelper_CanPlayerHearPlayer, "CVoiceGameMgrHelper::CanPlayerHearPlayer",
 		server_loader.GetModule(), Symbols::CVoiceGameMgrHelper_CanPlayerHearPlayerSym,
-		(void*)hook_CVoiceGameMgrHelper_CanPlayerHearPlayer, m_pID
+		(void*)DETOUR_THISCALL(hook_CVoiceGameMgrHelper_CanPlayerHearPlayer, CanPlayerHearPlayer), m_pID
 	);
 }
 

@@ -31,8 +31,8 @@ local function Vector(x, y, z)
     if isstring(vec) then
         local vals = vec:Split(" ")
         x = vals[1] or 0
-        y = vals[2] or 0
-        z = vals[3] or 0
+        y = vals[2] or y or 0
+        z = vals[3] or z or 0
     end
 
     return CreateVector(tonumber(x) or 0, tonumber(y) or 0, tonumber(z) or 0)
@@ -63,7 +63,32 @@ local function expect(value, expected_type, arg_num, is_optional)
     return value
 end
 
+-- RaphaelIT7: GMod also accepts string input for __newindex!
 local function check_num(value, arg_num, is_optional)
+    if value == nil then
+        if is_optional then
+            return nil
+        end
+
+        local caller = debug.getinfo(2, "n").name or "unknown"
+        return error(string.format(
+            "bad argument #%d to '%s' (number expected, got no value)",
+            arg_num,
+            caller
+        ), 2)
+    end
+
+    if type(value) == "number" then
+        return value
+    end
+
+    if type(value) == "string" then
+        local num = tonumber(value)
+        if num ~= nil then
+            return num
+        end
+    end
+
     return expect(value, "number", arg_num, is_optional)
 end
 

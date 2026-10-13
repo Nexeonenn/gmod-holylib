@@ -493,7 +493,7 @@ LUA_FUNCTION_STATIC(INetworkStringTable_GetAllStrings)
 			continue;
 
 		LUA->PushString(pStr);
-		Util::RawSetI(LUA, -2, ++idx);
+		Lua::RawSetI(LUA, -2, ++idx);
 	}
 
 	return 1;
@@ -535,7 +535,7 @@ LUA_FUNCTION_STATIC(INetworkStringTable_DeleteAllStrings)
 		CGameServer* pServer = (CGameServer*)Util::server;
 		for (int i = 0; i < MAX_MODELS; ++i)
 		{
-			CPrecacheItem item = pServer->model_precache[i];
+			CPrecacheItem& item = pServer->model_precache[i];
 			if (item.GetModel())
 				item.SetModel(nullptr);
 		}
@@ -544,7 +544,7 @@ LUA_FUNCTION_STATIC(INetworkStringTable_DeleteAllStrings)
 		CGameServer* pServer = (CGameServer*)Util::server;
 		for (int i = 0; i < MAX_SOUNDS; ++i)
 		{
-			CPrecacheItem item = pServer->sound_precache[i];
+			CPrecacheItem& item = pServer->sound_precache[i];
 			if (item.GetSound())
 				item.SetSound(nullptr);
 		}
@@ -553,7 +553,7 @@ LUA_FUNCTION_STATIC(INetworkStringTable_DeleteAllStrings)
 		CGameServer* pServer = (CGameServer*)Util::server;
 		for (int i = 0; i < MAX_BASE_DECALS; ++i)
 		{
-			CPrecacheItem item = pServer->decal_precache[i];
+			CPrecacheItem& item = pServer->decal_precache[i];
 			if (item.GetDecal())
 				item.SetDecal(nullptr);
 		}
@@ -562,7 +562,7 @@ LUA_FUNCTION_STATIC(INetworkStringTable_DeleteAllStrings)
 		CGameServer* pServer = (CGameServer*)Util::server;
 		for (int i = 0; i < MAX_GENERIC; ++i)
 		{
-			CPrecacheItem item = pServer->generic_precache[i];
+			CPrecacheItem& item = pServer->generic_precache[i];
 			if (item.GetGeneric())
 				item.SetGeneric(nullptr);
 		}
@@ -611,25 +611,25 @@ LUA_FUNCTION_STATIC(INetworkStringTable_DeleteString)
 	if (!Q_stricmp(MODEL_PRECACHE_TABLENAME, table->GetTableName()))
 	{
 		CGameServer* pServer = (CGameServer*)Util::server;
-		CPrecacheItem item = pServer->model_precache[strIndex];
+		CPrecacheItem& item = pServer->model_precache[strIndex];
 		if (item.GetModel())
 			item.SetModel(nullptr);
 	} else if (!Q_stricmp(SOUND_PRECACHE_TABLENAME, table->GetTableName()))
 	{
 		CGameServer* pServer = (CGameServer*)Util::server;
-		CPrecacheItem item = pServer->sound_precache[strIndex];
+		CPrecacheItem& item = pServer->sound_precache[strIndex];
 		if (item.GetSound())
 			item.SetSound(nullptr);
 	} else if (!Q_stricmp(DECAL_PRECACHE_TABLENAME, table->GetTableName()))
 	{
 		CGameServer* pServer = (CGameServer*)Util::server;
-		CPrecacheItem item = pServer->decal_precache[strIndex];
+		CPrecacheItem& item = pServer->decal_precache[strIndex];
 		if (item.GetDecal())
 			item.SetDecal(nullptr);
 	} else if (!Q_stricmp(GENERIC_PRECACHE_TABLENAME, table->GetTableName()))
 	{
 		CGameServer* pServer = (CGameServer*)Util::server;
-		CPrecacheItem item = pServer->generic_precache[strIndex];
+		CPrecacheItem& item = pServer->generic_precache[strIndex];
 		if (item.GetGeneric())
 			item.SetGeneric(nullptr);
 	}
@@ -688,7 +688,7 @@ LUA_FUNCTION_STATIC(INetworkStringTable_SetStringUserData)
 	CNetworkStringTable* table = (CNetworkStringTable*)Get_INetworkStringTable(LUA, 1, true);
 	int idx = (int)LUA->CheckNumber(2);
 	size_t iLength;
-	const char* pUserData = Util::CheckLString(LUA, 3, &iLength);
+	const char* pUserData = Lua::CheckLString(LUA, 3, &iLength);
 	int nLength = (int)LUA->CheckNumberOpt(4, 0);
 	if (nLength != 0)
 		iLength = nLength;

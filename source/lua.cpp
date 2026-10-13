@@ -120,6 +120,12 @@ Default__index(_HOLYLIB_CORE_TEST_REFERENCED);
 Default__newindex(_HOLYLIB_CORE_TEST_REFERENCED);
 Default__GetTable(_HOLYLIB_CORE_TEST_REFERENCED);
 
+// RaphaelIT7: BUG!
+// I got no idea why or how BUT _HOLYLIB_CORE.PushReferencedTestUserData()
+// can cause Lua stack corruption when this test run or **randomy afterwards!**
+// IMPORTANT!
+// We only removed this from our tests, this may still cause crashes for anything that uses PushReferenced_LuaClass
+// Though interestingly enouth nothing else can reproduce it...
 LUA_FUNCTION_STATIC(Test_PushReferencedTestUserData)
 {
 	Push__HOLYLIB_CORE_TEST_REFERENCED(LUA, &g_pCoreTestReferencedUserData);
@@ -301,12 +307,6 @@ bool Lua::PushHook(const char* hook, GarrysMod::Lua::ILuaInterface* pLua)
 		}
 	}
 
-	if (g_pModuleManager.GetModuleRealm() == Module_Realm::MENU)
-	{
-		DevMsg(PROJECT_NAME ": Lua::PushHook was blocked due to us being loaded by the Menu state, not server.\n");
-		return false;
-	}
-
 	pLua->GetField(LUA_GLOBALSINDEX, "hook");
 		if (pLua->GetType(-1) != GarrysMod::Lua::Type::Table)
 		{
@@ -333,6 +333,67 @@ Lua::ThreadAccessMutex Lua::g_pThreadAccessMutex;
 thread_local unsigned int Lua::ThreadAccessMutex::shared_locks = 0;
 thread_local unsigned int Lua::ThreadAccessMutex::exclusive_locks = 0;
 
+static inline void PushHolyLibEnums(GarrysMod::Lua::ILuaInterface* LUA)
+{
+	// Setup HolyLib Vars
+	LUA->PushBool(true);
+	LUA->SetField(GarrysMod::Lua::INDEX_GLOBAL, "_HOLYLIB");
+
+	LUA->PushString(HolyLib_GetRunNumber());
+	LUA->SetField(GarrysMod::Lua::INDEX_GLOBAL, "_HOLYLIB_RUN_NUMBER");
+
+	LUA->PushString(HolyLib_GetBranch());
+	LUA->SetField(GarrysMod::Lua::INDEX_GLOBAL, "_HOLYLIB_BRANCH");
+
+	LUA->PushString(HolyLib_GetVersion());
+	LUA->SetField(GarrysMod::Lua::INDEX_GLOBAL, "_HOLYLIB_VERSION");
+}
+
+class HolyLib_PluginThink : public GarrysMod::Lua::ILuaThreadedCall
+{
+public:
+	void SetLua(GarrysMod::Lua::ILuaInterface* pLua)
+	{
+		m_pLua = pLua;
+	}
+
+	bool IsDone()
+	{
+		if (m_pLua)
+		{
+			g_pModuleManager.Think(true);
+			g_pModuleManager.LuaThink(m_pLua);
+			Lua::ThinkMainInterface();
+		}
+
+		return m_bDone;
+	}
+
+	void Done(GarrysMod::Lua::ILuaInterface* LUA)
+	{
+		// We don't call delete since we create it as a static var.
+		// delete this;
+	}
+
+	void OnShutdown()
+	{
+		// delete this; // We are defined static! No delete this else we'd have a heart attack.
+	}
+
+	// We call this on Module shutdown
+	void MarkAsDone()
+	{
+		m_pLua = nullptr;
+		m_bDone = true;
+	}
+
+private:
+	GarrysMod::Lua::ILuaInterface* m_pLua = nullptr;
+	bool m_bDone = false;
+};
+
+static HolyLib_PluginThink pPluginThink;
+
 extern void SetupUnHolyVTableForThisShit(GarrysMod::Lua::ILuaInterface* pLua);
 void Lua::Init(GarrysMod::Lua::ILuaInterface* LUA)
 {
@@ -350,20 +411,15 @@ void Lua::Init(GarrysMod::Lua::ILuaInterface* LUA)
 		return;
 	}
 
+	if (g_pModuleManager.IsMarkedAsBinaryModule())
+	{
+		pPluginThink.SetLua(LUA);
+
+		// Add our Think hook as were not loaded as a plugin
+		LUA->AddThreadedCall(&pPluginThink);
+	}
+
 	g_Lua = LUA;
-
-	// Setup HolyLib Vars
-	LUA->PushBool(true);
-	LUA->SetField(GarrysMod::Lua::INDEX_GLOBAL, "_HOLYLIB");
-
-	LUA->PushString(HolyLib_GetRunNumber());
-	LUA->SetField(GarrysMod::Lua::INDEX_GLOBAL, "_HOLYLIB_RUN_NUMBER");
-
-	LUA->PushString(HolyLib_GetBranch());
-	LUA->SetField(GarrysMod::Lua::INDEX_GLOBAL, "_HOLYLIB_BRANCH");
-
-	LUA->PushString(HolyLib_GetVersion());
-	LUA->SetField(GarrysMod::Lua::INDEX_GLOBAL, "_HOLYLIB_VERSION");
 
 	// Lua Interface setup to prepare them for modules.
 	Lua::CreateLuaData(g_Lua, true);
@@ -405,6 +461,17 @@ void Lua::ServerInit()
 
 void Lua::Shutdown()
 {
+	if (g_pModuleManager.IsMarkedAsBinaryModule())
+	{
+		pPluginThink.MarkAsDone();
+		if (g_Lua)
+			g_Lua->Cycle(); // Just to get our ThreadedCall unloaded since when we are unloaded we expect to not leave any memory.
+
+		// Since were not a plugin we fire this manually, timing may be off but meh, this is as good as we can do this
+		// We fire before Lua shutdown since we expect g_Lua on the first call to still be valid
+		g_pModuleManager.LevelShutdown();
+	}
+
 	g_pModuleManager.LuaShutdown(g_Lua);
 
 	g_Lua->PushNil();
@@ -426,6 +493,11 @@ void Lua::FinalShutdown()
 			Msg(PROJECT_NAME ": This should NEVER happen! Discarding of old reference %i\n", ref);
 	}
 	Util::g_pReference.clear();
+
+	// LevelShutdown on a server is actually called multiple times
+	// I call it here a second time just so that in case Lua did someting that set values again they will be cleared again
+	if (g_pModuleManager.IsMarkedAsBinaryModule())
+		g_pModuleManager.LevelShutdown();
 }
 
 void Lua::ManualShutdown()
@@ -437,7 +509,6 @@ void Lua::ManualShutdown()
 	Lua::FinalShutdown();
 }
 
-static bool bManualShutdown = false;
 static Detouring::Hook detour_InitLuaClasses;
 static void hook_InitLuaClasses(GarrysMod::Lua::ILuaInterface* LUA) // ToDo: Add a hook to Lua::Startup or whatever it's name was and use that for the ServerInit.
 {
@@ -474,34 +545,25 @@ static int hook_GMOD_LoadBinaryModule(lua_State* L, const char* pFileName)
 
 void Lua::AddDetour() // Our Lua Loader.
 {
-	if (!bManualShutdown)
-	{
-		SourceSDK::ModuleLoader server_loader("server");
-		Detour::Create(
-			&detour_InitLuaClasses, "InitLuaClasses",
-			server_loader.GetModule(), Symbols::InitLuaClassesSym,
-			(void*)hook_InitLuaClasses, 0
-		);
-
-		SourceSDK::ModuleLoader lua_shared_loader("lua_shared");
-		Detour::Create(
-			&detour_CLuaInterface_Shutdown, "CLuaInterface::Shutdown",
-			lua_shared_loader.GetModule(), Symbols::CLuaInterface_ShutdownSym,
-			(void*)hook_CLuaInterface_Shutdown, 0
-		);
-	}
+	SourceSDK::ModuleLoader server_loader("server");
+	Detour::Create(
+		&detour_InitLuaClasses, "InitLuaClasses",
+		server_loader.GetModule(), Symbols::InitLuaClassesSym,
+		(void*)hook_InitLuaClasses, 0
+	);
 
 	SourceSDK::ModuleLoader lua_shared_loader("lua_shared");
+	Detour::Create(
+		&detour_CLuaInterface_Shutdown, "CLuaInterface::Shutdown",
+		lua_shared_loader.GetModule(), Symbols::CLuaInterface_ShutdownSym,
+		(void*)hook_CLuaInterface_Shutdown, 0
+	);
+
 	Detour::Create(
 		&detour_GMOD_LoadBinaryModule, "GMOD_LoadBinaryModule",
 		lua_shared_loader.GetModule(), Symbols::GMOD_LoadBinaryModuleSym,
 		(void*)hook_GMOD_LoadBinaryModule, 0
 	);
-}
-
-void Lua::SetManualShutdown()
-{
-	bManualShutdown = true;
 }
 
 GarrysMod::Lua::ILuaInterface* Lua::GetRealm(unsigned char realm)
@@ -713,7 +775,7 @@ bool Lua::FindOnObjectsMetaTable(lua_State* L, int nStackPos, int nKeyPos)
 		LUA->Push(nKeyPos);
 		LUA->RawGet(-2);
 		
-		if (Util::func_lua_type(LUA->GetState(), -1))
+		if (Lua::lua_type(LUA, -1))
 			return true;
 
 		LUA->Pop(2);
@@ -723,9 +785,11 @@ bool Lua::FindOnObjectsMetaTable(lua_State* L, int nStackPos, int nKeyPos)
 }
 
 // We need to do some hooking for these since our userdata is "special"
-class CLuaInterfaceProxy : public Detouring::ClassProxy<GarrysMod::Lua::ILuaInterface, CLuaInterfaceProxy> {
+class CLuaInterfaceProxy : public Detouring::ClassProxy<GarrysMod::Lua::ILuaInterface, CLuaInterfaceProxy>
+{
 public:
-	CLuaInterfaceProxy(GarrysMod::Lua::ILuaInterface* pLua) {
+	CLuaInterfaceProxy(GarrysMod::Lua::ILuaInterface* pLua)
+	{
 		if (Detour::CheckValue("initialize", "CLuaInterfaceProxy", Initialize(pLua)))
 		{
 			Detour::CheckValue("CLuaInterface::SetUserType", Hook(&GarrysMod::Lua::ILuaInterface::SetUserType, &CLuaInterfaceProxy::SetUserType));
@@ -864,7 +928,7 @@ public:
 	*/
 	virtual int GetType(int iStackPos)
 	{
-		int type = Util::func_lua_type(This()->GetState(), iStackPos);
+		int type = Lua::lua_type(This(), iStackPos);
 
 		if (type == GarrysMod::Lua::Type::UserData)
 		{
@@ -877,7 +941,7 @@ public:
 	// Fixed with the next update - https://github.com/Facepunch/garrysmod-issues/issues/6418
 	virtual bool IsType(int iStackPos, int iType)
 	{
-		int actualType = Util::func_lua_type(This()->GetState(), iStackPos);
+		int actualType = Lua::lua_type(This(), iStackPos);
 
 		if (actualType == iType)
 			return true;
@@ -892,7 +956,7 @@ public:
 	}
 };
 
-static unordered_set<Lua::StateData*> g_pLuaStates;
+static unordered_map<GarrysMod::Lua::ILuaInterface*, Lua::StateData*> g_pLuaStates;
 void Lua::CreateLuaData(GarrysMod::Lua::ILuaInterface* LUA, bool bNullOut)
 {
 	Lua::CriticalThreadAccess pThreadScope;
@@ -918,6 +982,9 @@ void Lua::CreateLuaData(GarrysMod::Lua::ILuaInterface* LUA, bool bNullOut)
 	LUA->ReferencePush(pLua->m_nLuaErrorReporter);
 	data->SetErrorFunc();
 
+	// Any state that HolyLib owns/touches should have these enums
+	PushHolyLibEnums(LUA);
+
 	if (pLua == g_Lua)
 	{
 		// The main thread is always locked and only released for a short time in Lua::ThinkMainInterface
@@ -925,7 +992,7 @@ void Lua::CreateLuaData(GarrysMod::Lua::ILuaInterface* LUA, bool bNullOut)
 	}
 
 	*reinterpret_cast<Lua::StateData**>(pathID + 24) = data;
-	g_pLuaStates.insert(data);
+	g_pLuaStates[LUA] = data;
 	Msg("holylib - Created thread data %p (%s)\n", data, pathID);
 }
 
@@ -936,16 +1003,22 @@ void Lua::RemoveLuaData(GarrysMod::Lua::ILuaInterface* LUA)
 	if (!data)
 		return;
 
-	g_pLuaStates.erase(data);
+	g_pLuaStates.erase(LUA);
 	Msg("holylib - Removed thread data %p\n", data);
 
 	delete data;
 	*reinterpret_cast<Lua::StateData**>((char*)LUA->GetPathID() + 24) = nullptr;
 }
 
-const unordered_set<Lua::StateData*>& Lua::GetAllLuaData()
+const unordered_map<GarrysMod::Lua::ILuaInterface*, Lua::StateData*>& Lua::GetAllLuaData()
 {
 	return g_pLuaStates;
+}
+
+// The caller should always hold a Lua::ScopedThreadAccess
+bool Lua::IsValidLuaState(GarrysMod::Lua::ILuaInterface* LUA)
+{
+	return g_pLuaStates.find(LUA) != g_pLuaStates.end();
 }
 
 Lua::StateData::~StateData()

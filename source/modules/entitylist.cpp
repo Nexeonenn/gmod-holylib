@@ -58,10 +58,12 @@ EntityList::~EntityList()
 	if (g_pEntListModule.InDebug())
 		Msg("Deleted-2 EntityList %p - %p\n", this, m_pLua);
 
-	Invalidate();
+	{
+		std::unique_lock<std::shared_mutex> lock(pEntityListsMutex);
+		pEntityLists.erase(this);
+	}
 
-	std::unique_lock<std::shared_mutex> lock(pEntityListsMutex);
-	pEntityLists.erase(this);
+	Invalidate();
 }
 
 void EntityList::Clear()
@@ -153,7 +155,7 @@ LUA_FUNCTION_STATIC(EntityList_GetEntities)
 		for (auto& [pEnt, iReference] : pData->GetReferences())
 		{
 			pData->PushReference(pEnt, iReference);
-			Util::RawSetI(LUA, -2, ++idx);
+			Lua::RawSetI(LUA, -2, ++idx);
 		}
 	return 1;
 }
@@ -243,7 +245,8 @@ LUA_FUNCTION_STATIC(EntityList_AddEntity)
 	EntityList* pData = Get_EntityList(LUA, 1, true);
 	CBaseEntity* pEntity = Util::Get_Entity(LUA, 2, true);
 
-	pData->AddEntity(pEntity, false);
+	if (pData->GetReferences().find(pEntity) == pData->GetReferences().end())
+		pData->AddEntity(pEntity, false);
 
 	return 0;
 }
@@ -299,7 +302,7 @@ LUA_FUNCTION_STATIC(GetGlobalEntityList)
 		for (auto& [pEnt, iReference] : pGlobalEntityList.GetReferences())
 		{
 			pGlobalEntityList.PushReference(pEnt, iReference);
-			Util::RawSetI(LUA, -2, ++idx);
+			Lua::RawSetI(LUA, -2, ++idx);
 		}
 
 	return 1;
@@ -354,12 +357,12 @@ void CEntListModule::LuaInit(GarrysMod::Lua::ILuaInterface* pLua, bool bServerIn
 		Util::AddFunc(pLua, EntityList_RemoveEntities, "RemoveEntities");
 		Util::AddFunc(pLua, EntityList_AddEntity, "AddEntity");
 		Util::AddFunc(pLua, EntityList_RemoveEntity, "RemoveEntity");
-		Util::AddFunc(pLua, EntityList_CreateCopy, "CreateCopy");
+		//Util::AddFunc(pLua, EntityList_CreateCopy, "CreateCopy");
 	pLua->Pop(1);
 
 	pLua->PushSpecial(GarrysMod::Lua::SPECIAL_GLOB);
 		Util::AddFunc(pLua, CreateEntityList, "CreateEntityList");
-		Util::AddFunc(pLua, CreateEntityListFromGlobal, "CreateEntityListFromGlobal");
+		//Util::AddFunc(pLua, CreateEntityListFromGlobal, "CreateEntityListFromGlobal");
 		Util::AddFunc(pLua, GetGlobalEntityList, "GetGlobalEntityList");
 	pLua->Pop(1);
 }

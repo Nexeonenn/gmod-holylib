@@ -35,6 +35,7 @@ enum ThreadState
 
 namespace GarrysMod::NetworkMessage
 {
+	constexpr int LuaRun = 5; // "BroadcastLua"
 	constexpr int LuaFileDownload = 4; // Client told us which files he needs, so we must provide (IDs are sent in shorts / 2 bytes and the last one is ID 0!)
 	constexpr int RequestLuaFiles = 3; // Calls GModDataPack::OnFilesRequested - Tells the client to check the client_lua_files stringtable and to tell us which files they need
 	constexpr int ClientLuaError = 2;
@@ -61,95 +62,6 @@ class DTVarByOffset;
 struct LuaUserData;
 namespace Util
 {
-	#define LUA_REGISTRYINDEX	(-10000)
-	#define LUA_ENVIRONINDEX	(-10001)
-	#define LUA_GLOBALSINDEX	(-10002)
-
-	#define SHIFT_STACK(stack, offset) (stack > 0) ? (stack + offset) : (stack - offset)
-
-	/*
-	 * RawSetI & RawGetI are way faster but Gmod doesn't expose or even use them :(
-	 */
-	extern Symbols::lua_rawseti func_lua_rawseti;
-	inline void RawSetI(GarrysMod::Lua::ILuaInterface* LUA, int iStackPos, int iValue)
-	{
-		if (LUA != g_Lua)
-		{
-			lua_rawseti(LUA->GetState(), iStackPos, iValue);
-			return;
-		}
-
-		if (func_lua_rawseti)
-		{
-			func_lua_rawseti(LUA->GetState(), iStackPos, iValue);
-		} else {
-			LUA->PushNumber(iValue);
-			LUA->Push(-2);
-			LUA->Remove(-3);
-			LUA->RawSet(SHIFT_STACK(iStackPos, 1));
-		}
-	}
-
-	extern Symbols::lua_rawgeti func_lua_rawgeti;
-	inline void RawGetI(GarrysMod::Lua::ILuaInterface* LUA, int iStackPos, int iValue)
-	{
-		if (LUA != g_Lua)
-		{
-			lua_rawgeti(LUA->GetState(), iStackPos, iValue);
-			return;
-		}
-
-		if (func_lua_rawgeti)
-		{
-			func_lua_rawgeti(LUA->GetState(), iStackPos, iValue);
-		} else {
-			LUA->PushNumber(iValue);
-			LUA->RawGet(SHIFT_STACK(iStackPos, 1));
-		}
-	}
-
-	extern Symbols::luaL_checklstring func_luaL_checklstring;
-	inline const char* CheckLString(GarrysMod::Lua::ILuaInterface* LUA, int nStackPos, size_t* nOutLength)
-	{
-		if (LUA != g_Lua)
-		{
-			return luaL_checklstring(LUA->GetState(), nStackPos, nOutLength);
-		}
-
-		if (func_luaL_checklstring)
-		{
-			return func_luaL_checklstring(LUA->GetState(), nStackPos, nOutLength);
-		} else {
-			const char* pStr = LUA->CheckString(nStackPos);
-			if (nOutLength)
-				*nOutLength = LUA->ObjLen(nStackPos);
-
-			return pStr;
-		}
-	}
-
-	/*
-	 * Why do we have the same code here when CLuaInterface::ReferencePush does exactly the same?
-	 * Because like this we should hopefully skip possibly funny code & the vtable call.
-	 *
-	 * NOTE: It does seem to be faster so were going to keep this.
-	 */
-	inline void ReferencePush(GarrysMod::Lua::ILuaInterface* LUA, int iReference)
-	{
-		if (LUA != g_Lua)
-		{
-			lua_rawgeti(LUA->GetState(), LUA_REGISTRYINDEX, iReference);
-			return;
-		}
-
-		if (func_lua_rawgeti)
-		{
-			func_lua_rawgeti(LUA->GetState(), LUA_REGISTRYINDEX, iReference);
-		} else {
-			LUA->ReferencePush(iReference);
-		}
-	}
-
 	/*
 	 * Pure debugging
 	 */
@@ -194,17 +106,20 @@ namespace Util
 		LUA->ReferenceFree(iReference);
 	}
 
-	inline void StartTable(GarrysMod::Lua::ILuaInterface* LUA) {
+	inline void StartTable(GarrysMod::Lua::ILuaInterface* LUA)
+	{
 		LUA->CreateTable();
 	}
 
-	inline void AddFunc(GarrysMod::Lua::ILuaInterface* LUA, GarrysMod::Lua::CFunc Func, const char* Name) {
+	inline void AddFunc(GarrysMod::Lua::ILuaInterface* LUA, GarrysMod::Lua::CFunc Func, const char* Name)
+	{
 		LUA->PushString(Name);
 		LUA->PushCFunction(Func);
 		LUA->RawSet(-3);
 	}
 
-	inline void AddValue(GarrysMod::Lua::ILuaInterface* LUA, double value, const char* Name) {
+	inline void AddValue(GarrysMod::Lua::ILuaInterface* LUA, double value, const char* Name)
+	{
 		LUA->PushString(Name);
 		LUA->PushNumber(value);
 		LUA->RawSet(-3);
@@ -366,7 +281,6 @@ namespace Util
 	// More Lua stuff for UserData (NEVER NULL)
 	extern Symbols::lua_setfenv func_lua_setfenv;
 	extern Symbols::lua_touserdata func_lua_touserdata;  // Unused for now
-	extern Symbols::lua_type func_lua_type;
 	extern Symbols::lua_gc func_lua_gc;
 	extern Symbols::lua_setallocf func_lua_setallocf;
 	extern Symbols::lua_newuserdata func_lua_newuserdata;
@@ -381,21 +295,6 @@ namespace Util
 	extern Symbols::lj_tab_new func_lj_tab_new;
 	extern Symbols::lj_gc_barrierf func_lj_gc_barrierf;
 	extern Symbols::lj_tab_get func_lj_tab_get;
-
-	// I hate this :sob:
-	// Once we actually need it / there is a confirmed issue then we can enable it
-	/*inline int lua_setfenv(lua_State *L, int idx)
-	{ if (g_Lua && L == g_Lua->GetState()) { return func_lua_setfenv(L, idx); } else { return ::lua_setfenv(L, idx); } }
-	inline void* lua_touserdata(lua_State *L, int idx)
-	{ if (g_Lua && L == g_Lua->GetState()) { return func_lua_touserdata(L, idx); } else { return ::lua_touserdata(L, idx); } }
-	inline int lua_type(lua_State *L, int idx)
-	{ if (g_Lua && L == g_Lua->GetState()) { return func_lua_type(L, idx); } else { return ::lua_type(L, idx); } }
-	inline int lua_gc(lua_State *L, int what, int data)
-	{ if (g_Lua && L == g_Lua->GetState()) { return func_lua_gc(L, what, data); } else { return ::lua_gc(L, what, data); } }
-	inline void lua_setallocf(lua_State *L, Symbols::lua_allocf f, void* ud)
-	{ if (g_Lua && L == g_Lua->GetState()) { func_lua_setallocf(L, f, ud); } else { ::lua_setallocf(L, f, ud); } }
-	inline int lua_pcall(lua_State *L, int nArgs, int nRets, int nErrorFunc)
-	{ if (g_Lua && L == g_Lua->GetState()) { return func_lua_pcall(L, nArgs, nRets, nErrorFunc); } else { return ::lua_pcall(L, nArgs, nRets, nErrorFunc); } }*/
 
 	extern IVEngineServer* engineserver;
 	extern IServerGameClients* servergameclients;

@@ -12,6 +12,7 @@
 #include "sourcesdk/baseclient.h"
 #include "hl2/hl2_player.h"
 #include "host_state.h"
+#include "usermessages.h"
 #include "detouring/customclassproxy.hpp"
 
 // memdbgon must be the last include file in a .cpp file!!!
@@ -34,11 +35,7 @@ IModule* pHolyLibModule = &g_pHolyLibModule;
 
 LUA_FUNCTION_STATIC(Reconnect)
 {
-	CBasePlayer* ent = Util::Get_Player(LUA, 1, true);
-	if (!ent)
-		LUA->ArgError(1, "Tried to use a NULL player!");
-
-	CBaseClient* client = Util::GetClientByIndex(ent->GetClientIndex());
+	CBaseClient* client = Util::Get_Client(LUA, 1, true);
 	if (client->GetNetChannel()) {
 		client->Reconnect();
 		LUA->PushBool(true);
@@ -66,7 +63,7 @@ LUA_FUNCTION_STATIC(FadeClientVolume)
 {
 	CBasePlayer* ent = Util::Get_Player(LUA, 1, true);
 	edict_t* pEdict = ent->edict();
-	if (!pEdict)
+	if (!pEdict) // Fun Fact: This can happen when you use unholylib.SetEntIndex on the player xd
 		LUA->ArgError(1, "Failed to get edict?");
 
 	float fadePercent = LUA->CheckNumber(2);
@@ -76,8 +73,7 @@ LUA_FUNCTION_STATIC(FadeClientVolume)
 
 	// It basically just runs a command clientside.
 	Util::engineserver->FadeClientVolume(pEdict, fadePercent, fadeOutSeconds, holdTime, fadeInSeconds);
-
-	return 1;
+	return 0;
 }
 
 LUA_JIT_WRAPPED_0(ServerExecute)
@@ -95,6 +91,7 @@ LUA_FUNCTION_STATIC(IsMapValid)
 }
 
 extern bf_write* GetActiveMessage();
+extern void SetActiveMessage(bf_write* bf);
 LUA_FUNCTION_STATIC(_EntityMessageBegin)
 {
 	CBaseEntity* pEnt = Util::Get_Entity(LUA, 1, true);
@@ -114,8 +111,25 @@ LUA_FUNCTION_STATIC(_UserMessageBegin)
 	IRecipientFilter* pFilter = Get_IRecipientFilter(LUA, 1, true);
 	const char* pName = LUA->CheckString(2);
 
+#if GMOD_X86_64
+	// On x86-64 currently our CUserMessages class is wrong
+	// See: https://github.com/perilouswithadollarsign/cstrike15_src/blob/master/game/shared/usermessages.h
+	// But I really don't want to deal with it right now
+	// I don't even think anyone is using this anyways (Move to dev 64x which will work)
+	LUA->ThrowError("This GMod branch is not supported currently");
+#endif
+
 #if MODULE_EXISTS_BITBUF
-	UserMessageBegin(*pFilter, pName);
+	int msg_type = Util::pUserMessages->LookupUserMessage(pName);
+	if (msg_type == -1)
+	{
+		if (g_pHolyLibModule.InDebug())
+			Warning("UserMessageBegin called with unregistered message '%s'\n", pName);
+
+		LUA->ArgError(2, "Unregistered message!");
+	}
+
+	SetActiveMessage(Util::engineserver->UserMessageBegin(pFilter, msg_type));
 	Push_bf_write(LUA, GetActiveMessage(), false);
 #else
 	MISSING_MODULE_ERROR(LUA, bitbuf);
@@ -198,7 +212,7 @@ static void hook_CBaseEntity_PostConstructor(CBaseEntity* pEnt, const char* szCl
 
 		g_Lua->CallFunctionProtected(3, 0, true);
 
-		Util::ReferencePush(iReference);
+		Lua::ReferencePush(iReference);
 		Util::ReferenceFree(iReference);
 		g_Lua->SetUserType(-1, nullptr);
 		g_Lua->Pop(1)*/
@@ -209,14 +223,7 @@ static void hook_CBaseEntity_PostConstructor(CBaseEntity* pEnt, const char* szCl
 
 LUA_FUNCTION_STATIC(SetSignOnState)
 {
-	CBaseClient* pClient = nullptr;
-	if (LUA->IsType(1, GarrysMod::Lua::Type::Entity))
-	{
-		pClient = Util::GetClientByPlayer(Util::Get_Player(LUA, 1, true));
-	} else {
-		pClient = Util::GetClientByUserID(LUA->CheckNumber(1));
-	}
-
+	CBaseClient* pClient = Util::Get_Client(LUA, 1, true);
 	int iSignOnState = LUA->CheckNumber(2);
 	int iSpawnCount = LUA->GetNumber(3);
 	bool bRawSet = LUA->GetBool(4);
@@ -337,14 +344,10 @@ LUA_FUNCTION_STATIC(HideMsg) // ToDo: Final logic is still missing.
 	std::string pRegex = LUA->CheckString(1);
 	bool bRemove = LUA->GetBool(2);
 
-	auto it = g_pHideMsg.find(pRegex);
-	if (it != g_pHideMsg.end())
-	{
-		if (bRemove)
-			g_pHideMsg.erase(it);
-	} else {
+	if (bRemove)
+		g_pHideMsg.erase(pRegex);
+	else
 		g_pHideMsg.insert(pRegex);
-	}
 
 	return 0;
 }
@@ -359,14 +362,7 @@ LUA_FUNCTION_STATIC(GetRegistry)
 
 LUA_FUNCTION_STATIC(Disconnect)
 {
-	CBaseClient* pClient = nullptr;
-	if (LUA->IsType(1, GarrysMod::Lua::Type::Entity))
-	{
-		pClient = Util::GetClientByPlayer(Util::Get_Player(LUA, 1, true));
-	} else {
-		pClient = Util::GetClientByUserID(LUA->CheckNumber(1));
-	}
-
+	CBaseClient* pClient = Util::Get_Client(LUA, 1, true);
 	const char* strReason = LUA->CheckString(2);
 	bool bSilent = LUA->GetBool(3);
 	bool bNoEvent = LUA->GetBool(4);
@@ -412,7 +408,7 @@ LUA_FUNCTION_STATIC(GetEnvironmentValue)
 	Util::DoUnsafeCodeCheck(LUA);
 	const char* pVarName = LUA->CheckString(1);
 	const char* pValue = getenv(pVarName);
-	LUA->PushString(pValue);
+	LUA->PushString(pValue ? pValue : ""); // getenv could return "" or null so we make a stable default just be ""
 	return 1;
 }
 
@@ -421,25 +417,20 @@ static Detouring::Hook detour_HostState_ChangeLevelMP;
 static void hook_HostState_ChangeLevelMP(const char* levelName, const char* landmarkName)
 {
 	if (levelName) 
-	{
 		V_strncpy(pLevelName, levelName, sizeof(pLevelName));
-	}
 
 	if (landmarkName)
-	{
 		V_strncpy(pLandmarkName, landmarkName, sizeof(pLandmarkName));
-	} else {
+	else
 		pLandmarkName[0] = '\0';
-	}
 
 	detour_HostState_ChangeLevelMP.GetTrampoline<Symbols::HostState_ChangeLevelMP>()(levelName, landmarkName);
 }
 
 void CHolyLibModule::LevelShutdown()
 {
-	if (*pLevelName == '\0') {
+	if (*pLevelName == '\0')
 		return;
-	}
 
 	if (Lua::PushHook("HolyLib:OnMapChange"))
 	{
@@ -510,11 +501,9 @@ void CHolyLibModule::LuaInit(GarrysMod::Lua::ILuaInterface* pLua, bool bServerIn
 		Util::FinishTable(pLua, "HolyLib");
 	} else {
 		if (Lua::PushHook("HolyLib:Initialize", pLua))
-		{
 			pLua->CallFunctionProtected(1, 0, true);
-		} else {
+		else
 			DevMsg(1, PROJECT_NAME ": Failed to call HolyLib:Initialize!\n");
-		}
 	}
 }
 

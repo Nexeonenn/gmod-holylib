@@ -106,7 +106,7 @@ public:
 			Error(PROJECT_NAME " - util: Somehow called OnThink for the wrong Lua Interface?!?\n");
 		}
 
-		Util::ReferencePush(pLua, iCallback);
+		Lua::ReferencePush(pLua, iCallback);
 		if (iStatus == -1)
 		{
 			pLua->PushNil();
@@ -120,7 +120,7 @@ public:
 
 	int iCallback = -1;
 	bool bCompress = true;
-	char iStatus = 0; // -1 = Failed | 0 = Running | 1 = Done
+	std::atomic<char> iStatus = 0; // -1 = Failed | 0 = Running | 1 = Done
 
 	const char* pData = nullptr;
 	int iDataReference = -1; // Keeping a reference to stop GC from potentially nuking it.
@@ -146,7 +146,7 @@ public:
 
 LUA_GetModuleData(LuaUtilModuleData, g_pUtilModule, Util);
 
-static void CompressJob(CompressEntry*& entry)
+static void CompressJob(CompressEntry* entry)
 {
 	if (entry->m_bCancel) // No Lua? We stop.
 		return;
@@ -178,7 +178,7 @@ inline void StartThread()
 LUA_FUNCTION_STATIC(util_AsyncCompress)
 {
 	size_t iLength;
-	const char* pData = Util::CheckLString(LUA, 1, &iLength);
+	const char* pData = Lua::CheckLString(LUA, 1, &iLength);
 	int iLevel = 5;
 	int iDictSize = 65536;
 	int iCallback = -1;
@@ -216,7 +216,7 @@ LUA_FUNCTION_STATIC(util_AsyncCompress)
 LUA_FUNCTION_STATIC(util_AsyncDecompress)
 {
 	size_t iLength;
-	const char* pData = Util::CheckLString(LUA, 1, &iLength);
+	const char* pData = Lua::CheckLString(LUA, 1, &iLength);
 	LUA->CheckType(2, GarrysMod::Lua::Type::Function);
 	LUA->Push(2);
 	int iCallback = Util::ReferenceCreate(LUA, "util.AsyncDecompress - Callback");
@@ -259,7 +259,7 @@ void TableToJSONRecursive(GarrysMod::Lua::ILuaInterface* pLua, LuaUtilModuleData
 	bool bEqual = false;
 	for (int iReference : pData->pRecursiveTableScope)
 	{
-		Util::ReferencePush(pLua, iReference);
+		Lua::ReferencePush(pLua, iReference);
 		if (pLua->Equal(-1, -3))
 		{
 			bEqual = true;
@@ -519,7 +519,7 @@ void JSONToTableRecursive(GarrysMod::Lua::ILuaInterface* pLua, const rapidjson::
 		for (rapidjson::SizeType i = 0; i < jsonValue.Size(); ++i)
 		{
 			JSONToTableRecursive(pLua, jsonValue[i], true, nIgnoreConversions);
-			Util::RawSetI(pLua, -2, ++idx);
+			Lua::RawSetI(pLua, -2, ++idx);
 		}
 	} else if (nOutsideSet) { // We got called by above jsonValue.IsArray(), so we expect ONLY ONE value to be pushed.
 		PushJSONValue(pLua, jsonValue, nIgnoreConversions);
@@ -547,7 +547,7 @@ LUA_FUNCTION_STATIC(util_JSONToTable)
 LUA_FUNCTION_STATIC(util_CompressLZ4)
 {
 	size_t iLength;
-	const char* pData = Util::CheckLString(LUA, 1, &iLength);
+	const char* pData = Lua::CheckLString(LUA, 1, &iLength);
 	int accelerationLevel = (int)LUA->CheckNumberOpt(2, 1);
 
 	void* pDest = nullptr;
@@ -568,7 +568,7 @@ LUA_FUNCTION_STATIC(util_CompressLZ4)
 LUA_FUNCTION_STATIC(util_DecompressLZ4)
 {
 	size_t iLength;
-	const char* pData = Util::CheckLString(LUA, 1, &iLength);
+	const char* pData = Lua::CheckLString(LUA, 1, &iLength);
 
 	void* pDest = nullptr;
 	unsigned int pDestLen = 0;
@@ -619,7 +619,7 @@ public:
 			Error(PROJECT_NAME " - util: Somehow called OnThink for the wrong Lua Interface?!?\n");
 		}
 
-		Util::ReferencePush(pLua, m_iCallback);
+		Lua::ReferencePush(pLua, m_iCallback);
 		pLua->PushString(m_strOut.GetString(), m_strOut.GetLength());
 		pLua->CallFunctionProtected(1, 0, true);
 
@@ -630,12 +630,12 @@ public:
 	TValue* m_pObject = nullptr;
 	bool m_bPretty = false;
 
-	bool m_bIsDone = false;
+	std::atomic<bool> m_bIsDone = false;
 	rapidjson::StringBuffer m_strOut;
 	int m_iCallback = -1;
 };
 
-static void JsonJob(JsonEntry*& entry)
+static void JsonJob(JsonEntry* entry)
 {
 	if (entry->m_bCancel)
 	{
@@ -727,7 +727,7 @@ LUA_FUNCTION_STATIC(util_AsyncTableToJSON)
 /*LUA_FUNCTION_STATIC(util_AsyncDecompress)
 {
 	size_t iLength;
-	const char* pData = Util::CheckLString(LUA, 1, &iLength);
+	const char* pData = Lua::CheckLString(LUA, 1, &iLength);
 	LUA->CheckType(2, GarrysMod::Lua::Type::Function);
 	LUA->Push(2);
 	int iCallback = Util::ReferenceCreate(LUA, "util.AsyncDecompress - Callback");
@@ -777,9 +777,7 @@ void CUtilModule::LuaShutdown(GarrysMod::Lua::ILuaInterface* pLua)
 	auto pData = GetUtilLuaData(pLua);
 
 	for (IJobEntry* entry : pData->pEntries)
-	{
 		entry->m_bCancel = true;
-	}
 
 	if (pCompressPool)
 		pCompressPool->ExecuteAll();
@@ -791,9 +789,8 @@ void CUtilModule::LuaShutdown(GarrysMod::Lua::ILuaInterface* pLua)
 		pJsonPool->ExecuteAll();
 
 	for (IJobEntry* entry : pData->pEntries)
-	{
 		delete entry;
-	}
+
 	pData->pEntries.clear();
 
 	if (Util::PushTable(pLua, "util"))
@@ -815,18 +812,20 @@ void CUtilModule::LuaThink(GarrysMod::Lua::ILuaInterface* pLua)
 	VPROF_BUDGET("HolyLib - CUtilModule::LuaThink", VPROF_BUDGETGROUP_HOLYLIB);
 
 	auto pData = GetUtilLuaData(pLua);
-	if (!pData || pData->pEntries.size() == 0)
+	if (!pData || pData->pEntries.empty())
 		return;
 
-	for(auto it = pData->pEntries.begin(); it != pData->pEntries.end(); )
+	// We don't use an iterator as a callback may result in pEntries being modified!
+	size_t i = 0;
+	while (i < pData->pEntries.size())
 	{
-		IJobEntry* entry = *it;
+		IJobEntry* entry = pData->pEntries[i];
 		if (entry->OnThink(pLua))
 		{
 			delete entry;
-			it = pData->pEntries.erase(it);
+			pData->pEntries.erase(pData->pEntries.begin() + i);
 		} else {
-			it++;
+			++i;
 		}
 	}
 }
